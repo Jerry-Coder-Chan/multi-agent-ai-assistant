@@ -37,7 +37,7 @@ jobs:
 
       - name: Build image
         run: |
-          BUILD_ID=$(gcloud builds submit --tag "$IMAGE_NAME" --no-stream --format="value(id)")
+          BUILD_ID=$(gcloud builds submit --tag "$IMAGE_NAME" --async --format="value(id)")
           echo "Build ID: $BUILD_ID"
           gcloud builds wait "$BUILD_ID"
 
