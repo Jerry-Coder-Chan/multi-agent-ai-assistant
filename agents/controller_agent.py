@@ -70,11 +70,39 @@ class ControllerAgent:
             if prompt_scan.threat_detected and self.security_agent.block_on_threat:
                 print(f"[SECURITY] ⚠️ THREAT BLOCKED: {prompt_scan.threat_type}")
                 safe_response = self.security_agent.get_safe_response(prompt_scan.threat_type)
+                safe_response += (
+                    "\n\nI’m focused on a few specific services right now. Try one of these:\n"
+                    "🎯 Recommendations → \"What should I do today?\"\n"
+                    "📋 Events → \"Show me events today\"\n"
+                    "📚 Future info → \"What concerts in 2026?\"\n"
+                    "🎨 Images → \"Generate an image of...\"\n"
+                    "☁️ Weather → \"How's the weather?\"\n"
+                    "⏰ Time → \"What time is it?\""
+                )
                 return {
                     "response": safe_response,
                     "intent": "SECURITY_BLOCKED",
                     "security_status": "blocked",
-                    "threat_type": prompt_scan.threat_type
+                    "threat_type": prompt_scan.threat_type,
+                    "security_scanned": True,
+                    "scan_time_ms": (prompt_scan.scan_time_ms or 0),
+                    "security": {
+                        "prompt": {
+                            "threat_detected": prompt_scan.threat_detected,
+                            "threat_type": prompt_scan.threat_type,
+                            "risk_score": prompt_scan.risk_score,
+                            "action_taken": prompt_scan.action_taken,
+                            "details": prompt_scan.details,
+                        },
+                        "response": {
+                            "threat_detected": False,
+                            "threat_type": None,
+                            "risk_score": None,
+                            "action_taken": None,
+                            "details": None,
+                        },
+                    },
+                    "airs_request_payload": getattr(self.security_agent, "last_request_payload", None),
                 }
             
             # Log threat but continue processing
@@ -499,7 +527,7 @@ class ControllerAgent:
             "📋 Events → \"Show me events today\"\n"
             "📚 Future info → \"What concerts in 2026?\"\n"
             "🎨 Images → \"Generate an image of...\"\n"
-            "☁️ Weather → \"What's the weather?\"\n"
+            "☁️ Weather → \"How's the weather?\"\n"
             "⏰ Time → \"What time is it?\""
         )
 

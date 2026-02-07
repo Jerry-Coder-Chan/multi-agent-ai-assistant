@@ -279,10 +279,33 @@ class SecurityAgent:
             threats = airs_response.get("threats", [])
             risk_score = airs_response.get("risk_score", 0)
             action = airs_response.get("action", "allow")
-            
-            threat_detected = len(threats) > 0 or status == "threat"
+
+            # Support AIRS responses that report in "details"
+            details = airs_response.get("details", {})
+            category = details.get("category")
+            details_action = details.get("action")
+            prompt_detected = details.get("prompt_detected", {}) or {}
+            response_detected = details.get("response_detected", {}) or {}
+            detected_flags = list(prompt_detected.values()) + list(response_detected.values())
+            detected_any = any(bool(v) for v in detected_flags)
+
+            if details_action:
+                action = details_action
+
+            threat_detected = (
+                len(threats) > 0
+                or status == "threat"
+                or detected_any
+                or (category and category.lower() != "benign")
+                or (action and action.lower() == "block")
+            )
             is_safe = not threat_detected or action.lower() == "allow"
-            threat_type = threats[0].get("type") if threats else None
+            if threats:
+                threat_type = threats[0].get("type")
+            elif category:
+                threat_type = category
+            else:
+                threat_type = next((k for k, v in {**prompt_detected, **response_detected}.items() if v), None)
             
             if threat_detected and self.block_on_threat:
                 action_taken = "BLOCKED"

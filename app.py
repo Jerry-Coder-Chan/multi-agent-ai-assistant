@@ -335,14 +335,6 @@ with st.sidebar:
             help="Route prompts and responses through AIRS Runtime Security"
         )
         enable_airs_security = airs_mode == "ON"
-        demo_mode = st.radio(
-            "Demo Mode (Force Block on AIRS Threat Signal)",
-            ["ON", "OFF"],
-            index=1,
-            disabled=not enable_airs_security,
-            help="If AIRS flags a threat, force a block even if policy allows"
-        )
-        enable_demo_block = demo_mode == "ON"
         prompt_mode = st.radio(
             "Scan User Prompts",
             ["ON", "OFF"],
@@ -357,43 +349,20 @@ with st.sidebar:
             disabled=not enable_airs_security
         )
         enable_response_scan = response_mode == "ON"
-        # No manual block toggle: default to block on real threats when demo mode is OFF.
-        block_on_threat = enable_airs_security and not enable_demo_block
+        # Block on real threats when AIRS is enabled
+        block_on_threat = enable_airs_security
         
         # Show security stats if controller exists
         if st.session_state.controller and hasattr(st.session_state.controller, 'security_agent'):
             if st.session_state.controller.security_agent:
                 with st.expander("📊 Security Statistics"):
-                    stats = st.session_state.controller.get_security_stats()
-                    if stats.get('enabled'):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Total Scans", stats['total_scans'])
-                            st.metric("Threats", stats['threats_detected'])
-                        with col2:
-                            st.metric("Blocked", stats['blocked_requests'])
-                            st.metric("Threat Rate", f"{stats['threat_rate']:.1f}%")
+                    stats_placeholder = st.empty()
                 with st.expander("🧪 AIRS Verdict (Last Request)"):
-                    verdict = st.session_state.last_security_verdict
-                    if verdict:
-                        st.json(verdict)
-                    else:
-                        st.info("No AIRS verdict yet.")
-                with st.expander("📦 AIRS Payload Preview (Last Request)"):
-                    payload = st.session_state.last_airs_request
-                    if payload:
-                        st.json(_redact_sensitive_fields(payload))
-                    else:
-                        st.info("No AIRS payload yet.")
+                    verdict_placeholder = st.empty()
+                with st.expander("📦 AIRS Request Payload (Last Request)"):
+                    payload_placeholder = st.empty()
                 with st.expander("🚫 Blocked/Filtered Events"):
-                    if st.session_state.security_events:
-                        for event in st.session_state.security_events[-5:][::-1]:
-                            st.markdown(
-                                f"- **{event['kind']}** · {event['threat_type']} · "
-                                f"`{event['time']}`\n  - {event['summary']}"
-                            )
-                    else:
-                        st.info("No blocked/filtered events yet.")
+                    blocked_placeholder = st.empty()
     else:
         # Placeholder for security settings when no key
         st.info("💡 Add AIRS API Key to enable runtime security monitoring")
@@ -491,6 +460,11 @@ if st.session_state.get("controller") and getattr(st.session_state.controller, "
 if airs_status == "ON":
     st.success("Prisma AIRS Runtime Security: ON")
 else:
+    # Fallback placeholders if security sidebar is not available
+    stats_placeholder = None
+    verdict_placeholder = None
+    payload_placeholder = None
+    blocked_placeholder = None
     st.warning("Prisma AIRS Runtime Security: OFF")
 
 # Display initialization status
@@ -526,12 +500,24 @@ if not st.session_state.initialized:
         - Create a futuristic cityscape
         """)
 else:
+    intent_labels = {
+        "SECURITY_BLOCKED": "Security Agent",
+        "SECURITY_FILTERED": "Security Agent",
+        "TIME_QUERY": "Time Agent",
+        "WEATHER_QUERY": "Weather Agent",
+        "RECOMMENDATION": "Recommendation Agent",
+        "RAG_QUERY": "RAG Agent",
+        "EVENT_QUERY_DB": "SQL Agent",
+        "IMAGE_GENERATION": "Image Agent",
+        "UNKNOWN": "LLM Direct",
+    }
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             # Display Intent Badge if present
             if "intent" in message:
-                st.markdown(f'<div class="intent-badge">🔍 {message["intent"]}</div>', unsafe_allow_html=True)
+                label = intent_labels.get(message["intent"], message["intent"])
+                st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
             if message.get("security_badge"):
                 st.markdown(
                     '<div style="display:inline-block;background:#c62828;color:white;'
@@ -570,26 +556,38 @@ else:
                             scan_time = result.get("scan_time_ms", 0)
                             st.caption(f"🔒 Security scanned ({scan_time:.0f}ms)")
                             st.session_state.last_security_verdict = result.get("security")
-                            if st.session_state.controller and st.session_state.controller.security_agent:
+                            if result.get("airs_request_payload"):
+                                st.session_state.last_airs_request = result.get("airs_request_payload")
+                            elif st.session_state.controller and st.session_state.controller.security_agent:
                                 st.session_state.last_airs_request = getattr(
                                     st.session_state.controller.security_agent,
                                     "last_request_payload",
                                     None
                                 )
-                        
-                        # Demo mode: force block when AIRS flags a prompt threat
-                        if enable_demo_block and result.get("security"):
-                            prompt_verdict = result["security"].get("prompt", {})
-                            if prompt_verdict.get("threat_detected"):
-                                response = "Request blocked by Prisma AIRS Runtime Security (demo mode)."
-                                intent = "SECURITY_BLOCKED"
-                                security_badge = True
-                                result["security_status"] = "blocked"
-                                result["threat_type"] = prompt_verdict.get("threat_type", "unknown")
-                                # Annotate verdict to show demo override
-                                prompt_verdict.setdefault("details", {})
-                                if isinstance(prompt_verdict["details"], dict):
-                                    prompt_verdict["details"]["demo_mode_forced_block"] = True
+                            if stats_placeholder is not None and st.session_state.controller:
+                                stats = st.session_state.controller.get_security_stats()
+                                if stats.get('enabled'):
+                                    with stats_placeholder.container():
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.metric("Total Scans", stats['total_scans'])
+                                            st.metric("Threats", stats['threats_detected'])
+                                        with col2:
+                                            st.metric("Blocked", stats['blocked_requests'])
+                                            st.metric("Threat Rate", f"{stats['threat_rate']:.1f}%")
+                            # Update sidebar immediately if placeholders exist
+                            if verdict_placeholder is not None:
+                                verdict = st.session_state.last_security_verdict
+                                if verdict:
+                                    verdict_placeholder.json(verdict)
+                                else:
+                                    verdict_placeholder.info("No AIRS verdict yet.")
+                            if payload_placeholder is not None:
+                                payload = st.session_state.last_airs_request
+                                if payload:
+                                    payload_placeholder.json(_redact_sensitive_fields(payload))
+                                else:
+                                    payload_placeholder.info("No AIRS payload yet.")
                         
                         # Capture blocked or filtered events for demo visibility
                         security_status = result.get("security_status")
@@ -602,6 +600,18 @@ else:
                                 "summary": prompt[:120],
                                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             })
+                            if blocked_placeholder is not None:
+                                events = st.session_state.security_events
+                                if events:
+                                    lines = []
+                                    for event in events[-5:][::-1]:
+                                        lines.append(
+                                            f"- **{event['kind']}** · {event['threat_type']} · "
+                                            f"`{event['time']}`\n  - {event['summary']}"
+                                        )
+                                    blocked_placeholder.markdown("\n".join(lines))
+                                else:
+                                    blocked_placeholder.info("No blocked/filtered events yet.")
                     else:
                         # Fallback for legacy support
                         response = result
@@ -609,7 +619,15 @@ else:
                         security_badge = False
                     
                     # Display Intent
-                    st.markdown(f'<div class="intent-badge">🔍 {intent}</div>', unsafe_allow_html=True)
+                    label = intent_labels.get(intent, intent)
+                    st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
+                    if security_badge:
+                        st.markdown(
+                            '<div style="display:inline-block;background:#c62828;color:white;'
+                            'padding:0.15rem 0.4rem;border-radius:0.3rem;font-size:0.75rem;'
+                            'font-weight:bold;margin-bottom:0.4rem;">AIRS BLOCKED</div>',
+                            unsafe_allow_html=True
+                        )
                     st.markdown(response)
                     
                     # Add assistant message with intent
