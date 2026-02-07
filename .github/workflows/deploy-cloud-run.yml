@@ -14,6 +14,7 @@ env:
   GCP_REGION: ${{ secrets.GCP_REGION }}
   SERVICE_NAME: ${{ secrets.SERVICE_NAME }}
   IMAGE_NAME: gcr.io/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.SERVICE_NAME }}
+  APP_VERSION: ${{ github.sha }}
 
 jobs:
   deploy:
@@ -63,4 +64,5 @@ jobs:
             --memory 2Gi \
             --cpu 2 \
             --timeout 300 \
+            --set-env-vars="APP_VERSION=${APP_VERSION}" \
             --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"

@@ -180,7 +180,9 @@ def _redact_sensitive_fields(obj):
     if isinstance(obj, list):
         return [_redact_sensitive_fields(v) for v in obj]
     return obj
-    # Generate unique session ID for security tracking
+
+# Ensure session ID exists for security tracking
+if 'user_session_id' not in st.session_state:
     import hashlib
     from datetime import datetime
     session_id = hashlib.md5(f"{datetime.now().isoformat()}".encode()).hexdigest()[:12]
@@ -394,6 +396,8 @@ with st.sidebar:
 # Main chat interface
 st.title("🤖 Multi-Agent AI Assistant")
 st.caption("Your intelligent event and activity companion")
+app_version = os.environ.get("APP_VERSION", "dev")
+st.caption(f"Version: {app_version}")
 
 # Prisma AIRS status indicator (for demo visibility)
 airs_status = "OFF"
@@ -468,8 +472,8 @@ else:
                     # Always call AIRS (via controller). Demo mode can force a block
                     # when AIRS detects a threat even if policy would allow it.
                     result = st.session_state.controller.handle_query(
-                        prompt, 
-                        user_id=st.session_state.user_session_id
+                        prompt,
+                        user_id=st.session_state.get("user_session_id", "session_unknown")
                     )
                     
                     # Handle dictionary response from updated controller
