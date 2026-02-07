@@ -310,9 +310,28 @@ class ControllerAgent:
             if "2026" in query:
                 answer += "\n\n💡 _For current events, ask for recommendations!_"
 
+            # If RAG couldn't answer, fall back to friendly LLM response
+            if self._is_rag_no_answer(answer):
+                return self._handle_unknown(query, routed_via_llm=True)
+
             return answer
         except Exception as e:
-            return f"Error: {str(e)}"
+            return self._handle_unknown(query, routed_via_llm=True)
+
+    def _is_rag_no_answer(self, answer: str) -> bool:
+        """Heuristic to detect when RAG has no useful answer."""
+        if not answer:
+            return True
+        lowered = answer.lower()
+        signals = [
+            "documents provided do not contain",
+            "i don't know",
+            "i do not know",
+            "not contain information",
+            "cannot find",
+            "no information",
+        ]
+        return any(s in lowered for s in signals)
 
     def _handle_image_generation(self, query: str, user_id: str = "anonymous") -> str:
         """Handle image generation with extra security scanning."""
@@ -472,7 +491,7 @@ class ControllerAgent:
             response += f"📅 {tomorrow.strftime('%A, %B %d, %Y')}\n"
             return response
 
-    def _handle_unknown(self, query: str) -> str:
+    def _handle_unknown(self, query: str, routed_via_llm: bool = False) -> str:
         """Handle unknown intents with a friendly response and guidance."""
         reminder = (
             "I’m focused on a few specific services right now. Try one of these:\n"
@@ -483,6 +502,15 @@ class ControllerAgent:
             "☁️ Weather → \"What's the weather?\"\n"
             "⏰ Time → \"What time is it?\""
         )
+
+        # Guardrail for time-sensitive/news/sports questions
+        if self._looks_time_sensitive(query):
+            notice = (
+                "I don’t have reliable access to live sports/news results in this demo. "
+                "I can still share general info if you rephrase, or you can ask about the "
+                "features below."
+            )
+            return f"{notice}\n\n{reminder}"
 
         try:
             response = self.llm.chat.completions.create(
@@ -502,9 +530,31 @@ class ControllerAgent:
                 temperature=0.4,
             )
             reply = response.choices[0].message.content.strip()
+            if routed_via_llm:
+                routed_note = "Note: I couldn’t answer from the system’s data, so I routed this to the LLM."
+                return f"{reply}\n\n{routed_note}\n\n{reminder}"
             return f"{reply}\n\n{reminder}"
         except Exception:
             return reminder
+
+    def _looks_time_sensitive(self, query: str) -> bool:
+        """Detect likely time-sensitive queries (news/sports/results)."""
+        lowered = query.lower()
+        signals = [
+            "last week",
+            "today",
+            "yesterday",
+            "this week",
+            "recent",
+            "latest",
+            "who won",
+            "results",
+            "score",
+            "champion",
+            "final",
+        ]
+        topics = ["news", "sports", "tournament", "open", "league", "cup"]
+        return any(s in lowered for s in signals) and any(t in lowered for t in topics)
     
     def get_security_stats(self) -> Dict:
         """Get security statistics if security agent is enabled"""
