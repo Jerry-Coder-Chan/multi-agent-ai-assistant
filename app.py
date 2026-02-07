@@ -164,6 +164,22 @@ if 'initialized' not in st.session_state:
     st.session_state.controller = None
     st.session_state.security_events = []
     st.session_state.last_security_verdict = None
+    st.session_state.last_airs_request = None
+
+def _redact_sensitive_fields(obj):
+    """Redact common secret fields before displaying."""
+    sensitive_keys = {"api_key", "token", "authorization", "x-pan-token", "secret"}
+    if isinstance(obj, dict):
+        redacted = {}
+        for k, v in obj.items():
+            if k.lower() in sensitive_keys:
+                redacted[k] = "***REDACTED***"
+            else:
+                redacted[k] = _redact_sensitive_fields(v)
+        return redacted
+    if isinstance(obj, list):
+        return [_redact_sensitive_fields(v) for v in obj]
+    return obj
     # Generate unique session ID for security tracking
     import hashlib
     from datetime import datetime
@@ -278,6 +294,12 @@ with st.sidebar:
                         st.json(verdict)
                     else:
                         st.info("No AIRS verdict yet.")
+                with st.expander("📦 AIRS Payload Preview (Last Request)"):
+                    payload = st.session_state.last_airs_request
+                    if payload:
+                        st.json(_redact_sensitive_fields(payload))
+                    else:
+                        st.info("No AIRS payload yet.")
                 with st.expander("🚫 Blocked/Filtered Events"):
                     if st.session_state.security_events:
                         for event in st.session_state.security_events[-5:][::-1]:
@@ -461,6 +483,12 @@ else:
                             scan_time = result.get("scan_time_ms", 0)
                             st.caption(f"🔒 Security scanned ({scan_time:.0f}ms)")
                             st.session_state.last_security_verdict = result.get("security")
+                            if st.session_state.controller and st.session_state.controller.security_agent:
+                                st.session_state.last_airs_request = getattr(
+                                    st.session_state.controller.security_agent,
+                                    "last_request_payload",
+                                    None
+                                )
                         
                         # Demo mode: force block when AIRS flags a prompt threat
                         if enable_demo_block and result.get("security"):

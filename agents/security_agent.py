@@ -249,7 +249,10 @@ class SecurityAgent:
     
     def _call_airs_api(self, request_payload: Dict) -> Dict:
         """Make synchronous call to AIRS API"""
-        
+
+        # Store last request payload for debugging/visibility
+        self.last_request_payload = request_payload
+
         url = f"{self.AIRS_BASE_URL}{self.AIRS_SYNC_ENDPOINT}"
         
         headers = {
