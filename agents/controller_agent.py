@@ -105,7 +105,7 @@ class ControllerAgent:
             elif intent == "TIME_QUERY":
                 response = self._handle_time_query(user_query, user_id)
             else:
-                response = self._handle_unknown()
+                response = self._handle_unknown(user_query)
 
             # ====================================================================
             # SECURITY STEP 2: Scan response before returning to user
@@ -472,17 +472,39 @@ class ControllerAgent:
             response += f"📅 {tomorrow.strftime('%A, %B %d, %Y')}\n"
             return response
 
-    def _handle_unknown(self) -> str:
-        """Handle unknown intents."""
-        return """I can help with:
-            🎯 Recommendations → "What should I do today?"
-            📋 Events → "Show me events today"
-            📚 Future info → "What concerts in 2026?"
-            🎨 Images → "Generate an image of..."
-            ☁️ Weather → "What's the weather?"
-            ⏰ Time → "What time is it?"
+    def _handle_unknown(self, query: str) -> str:
+        """Handle unknown intents with a friendly response and guidance."""
+        reminder = (
+            "I’m focused on a few specific services right now. Try one of these:\n"
+            "🎯 Recommendations → \"What should I do today?\"\n"
+            "📋 Events → \"Show me events today\"\n"
+            "📚 Future info → \"What concerts in 2026?\"\n"
+            "🎨 Images → \"Generate an image of...\"\n"
+            "☁️ Weather → \"What's the weather?\"\n"
+            "⏰ Time → \"What time is it?\""
+        )
 
-            Try rephrasing!"""
+        try:
+            response = self.llm.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a friendly assistant for a multi-agent demo app. "
+                            "Answer the user briefly and politely in 1-2 sentences. "
+                            "Do not claim capabilities outside the listed services."
+                        ),
+                    },
+                    {"role": "user", "content": query},
+                ],
+                max_tokens=80,
+                temperature=0.4,
+            )
+            reply = response.choices[0].message.content.strip()
+            return f"{reply}\n\n{reminder}"
+        except Exception:
+            return reminder
     
     def get_security_stats(self) -> Dict:
         """Get security statistics if security agent is enabled"""
