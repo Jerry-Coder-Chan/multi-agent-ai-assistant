@@ -39,7 +39,19 @@ jobs:
         run: |
           BUILD_ID=$(gcloud builds submit --tag "$IMAGE_NAME" --async --format="value(id)")
           echo "Build ID: $BUILD_ID"
-          gcloud builds wait "$BUILD_ID"
+          for i in {1..120}; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --format="value(status)")
+            echo "Build status: $STATUS"
+            if [ "$STATUS" = "SUCCESS" ]; then
+              exit 0
+            fi
+            if [ "$STATUS" = "FAILURE" ] || [ "$STATUS" = "CANCELLED" ] || [ "$STATUS" = "TIMEOUT" ]; then
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "Build timed out waiting for completion"
+          exit 1
 
       - name: Deploy to Cloud Run
         run: |
