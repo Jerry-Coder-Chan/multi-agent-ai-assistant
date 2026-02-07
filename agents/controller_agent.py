@@ -105,7 +105,7 @@ class ControllerAgent:
             elif intent == "TIME_QUERY":
                 response = self._handle_time_query(user_query, user_id)
             else:
-                response = self._handle_unknown(user_query)
+                response = self._handle_unknown(user_query, routed_via_llm=True)
 
             # ====================================================================
             # SECURITY STEP 2: Scan response before returning to user
