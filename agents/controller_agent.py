@@ -504,13 +504,12 @@ class ControllerAgent:
         )
 
         # Guardrail for time-sensitive/news/sports questions
+        time_sensitive_notice = None
         if self._looks_time_sensitive(query):
-            notice = (
+            time_sensitive_notice = (
                 "I don’t have reliable access to live sports/news results in this demo. "
-                "I can still share general info if you rephrase, or you can ask about the "
-                "features below."
+                "I can still share general info, but it may be out of date."
             )
-            return f"{notice}\n\n{reminder}"
 
         try:
             response = self.llm.chat.completions.create(
@@ -521,7 +520,8 @@ class ControllerAgent:
                         "content": (
                             "You are a friendly assistant for a multi-agent demo app. "
                             "Answer the user briefly and politely in 1-2 sentences. "
-                            "Do not claim capabilities outside the listed services."
+                            "If the question is outside the app’s core services, you may still answer "
+                            "with general knowledge, but avoid claiming real-time or proprietary data."
                         ),
                     },
                     {"role": "user", "content": query},
@@ -532,7 +532,11 @@ class ControllerAgent:
             reply = response.choices[0].message.content.strip()
             if routed_via_llm:
                 routed_note = "Note: I couldn’t answer from the system’s data, so I routed this to the LLM."
+                if time_sensitive_notice:
+                    return f"{time_sensitive_notice}\n\n{reply}\n\n{routed_note}\n\n{reminder}"
                 return f"{reply}\n\n{routed_note}\n\n{reminder}"
+            if time_sensitive_notice:
+                return f"{time_sensitive_notice}\n\n{reply}\n\n{reminder}"
             return f"{reply}\n\n{reminder}"
         except Exception:
             return reminder

@@ -134,6 +134,10 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    :root {
+        --brand-accent: #1f7a8c;
+        --brand-accent-strong: #17606f;
+    }
     .stChatMessage {
         padding: 1rem;
         border-radius: 0.5rem;
@@ -153,6 +157,85 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 0.5rem;
         display: inline-block;
+    }
+    /* Neutralize red defaults for controls */
+    .stRadio [role="radiogroup"] > div div[aria-checked="true"]::before {
+        background-color: var(--brand-accent) !important;
+        border-color: var(--brand-accent) !important;
+    }
+    .stSlider [data-baseweb="slider"] [data-testid="stTickBar"] {
+        background: var(--brand-accent) !important;
+    }
+    .stSlider [data-testid="stTickBar"] {
+        background: var(--brand-accent) !important;
+        height: 4px !important;
+    }
+    .stSlider [data-testid="stTickBar"]::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: transparent !important;
+    }
+    /* Remove the filled block by clearing slider container backgrounds */
+    .stSlider [data-baseweb="slider"] > div {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .stSlider [data-baseweb="slider"] .st-dw {
+        background: transparent !important;
+    }
+    .stSlider [data-baseweb="slider"] > div > div,
+    .stSlider [data-baseweb="slider"] > div > div > div {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .stSlider .st-dw.st-dd.st-df.st-de.st-b4.st-dx.st-dy,
+    .stSlider .st-av.st-aw.st-ax.st-ay.st-dz.st-e0.st-b9.st-e1.st-e2 {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .stSlider [data-baseweb="slider"] {
+        background: transparent !important;
+    }
+    .stSlider [data-baseweb="slider"] > div::before,
+    .stSlider [data-baseweb="slider"] > div::after {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .stSlider [data-baseweb="slider"] [data-baseweb="slider-track"] {
+        background: var(--brand-accent) !important;
+        height: 4px !important;
+        box-shadow: none !important;
+    }
+    .stSlider [data-baseweb="slider"] [data-baseweb="slider-track"] > div,
+    .stSlider [data-baseweb="slider"] [data-baseweb="slider-track"] > div > div {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .stSlider [data-baseweb="slider"] [data-baseweb="progressbar"],
+    .stSlider [data-baseweb="slider"] [role="progressbar"],
+    .stSlider [data-baseweb="slider"] [aria-valuenow] {
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+    .stSlider [data-baseweb="slider"] div[role="slider"]::before {
+        background-color: var(--brand-accent) !important;
+    }
+    .stSlider [data-baseweb="slider"] div[role="slider"] {
+        background-color: var(--brand-accent) !important;
+        border-color: var(--brand-accent-strong) !important;
+    }
+    .stSlider [data-testid="stSliderValue"] {
+        color: var(--brand-accent-strong) !important;
+    }
+    .stButton > button[kind="primary"] {
+        background-color: var(--brand-accent) !important;
+        border-color: var(--brand-accent-strong) !important;
+        color: #ffffff !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: var(--brand-accent-strong) !important;
+        border-color: var(--brand-accent-strong) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -239,7 +322,7 @@ with st.sidebar:
     # Settings
     st.subheader("Settings")
     llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
-    max_history = st.slider("Conversation History", 5, 50, 20)
+    max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
     
     # Security Settings (only show if AIRS key provided)
     if airs_api_key:
