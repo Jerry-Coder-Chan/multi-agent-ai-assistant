@@ -158,6 +158,11 @@ st.markdown("""
         margin-bottom: 0.5rem;
         display: inline-block;
     }
+    .assistant-text, .assistant-text * {
+        font-family: inherit !important;
+        font-style: normal !important;
+        font-weight: 400 !important;
+    }
     /* Neutralize red defaults for controls */
     .stRadio [role="radiogroup"] > div div[aria-checked="true"]::before {
         background-color: var(--brand-accent) !important;
@@ -511,12 +516,26 @@ else:
         "IMAGE_GENERATION": "Image Agent",
         "UNKNOWN": "LLM Direct",
     }
+
+    def _format_multi_intent(intent: str) -> str:
+        if not intent.startswith("MULTI:"):
+            return intent_labels.get(intent, intent)
+        parts = intent.replace("MULTI:", "").split("+")
+        labels = [intent_labels.get(p, p) for p in parts]
+        if len(labels) == 1:
+            return labels[0]
+        if len(labels) == 2:
+            return f"Multiple Agents: {labels[0]} and {labels[1]}"
+        return f"Multiple Agents: {', '.join(labels[:-1])}, and {labels[-1]}"
+
+    def _render_response(text: str):
+        st.markdown(f'<div class="assistant-text">{text}</div>', unsafe_allow_html=True)
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             # Display Intent Badge if present
             if "intent" in message:
-                label = intent_labels.get(message["intent"], message["intent"])
+                label = _format_multi_intent(message["intent"])
                 st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
             if message.get("security_badge"):
                 st.markdown(
@@ -525,7 +544,7 @@ else:
                     'font-weight:bold;margin-bottom:0.4rem;">AIRS BLOCKED</div>',
                     unsafe_allow_html=True
                 )
-            st.markdown(message["content"])
+            _render_response(message["content"])
     
     # Chat input
     if prompt := st.chat_input("Ask me anything..."):
@@ -619,7 +638,7 @@ else:
                         security_badge = False
                     
                     # Display Intent
-                    label = intent_labels.get(intent, intent)
+                    label = _format_multi_intent(intent)
                     st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
                     if security_badge:
                         st.markdown(
@@ -628,7 +647,7 @@ else:
                             'font-weight:bold;margin-bottom:0.4rem;">AIRS BLOCKED</div>',
                             unsafe_allow_html=True
                         )
-                    st.markdown(response)
+                    _render_response(response)
                     
                     # Add assistant message with intent
                     st.session_state.messages.append({

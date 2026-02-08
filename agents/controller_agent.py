@@ -111,29 +111,33 @@ class ControllerAgent:
 
         # Continue with normal processing
         location, date = self.chat_agent.extract_entities(user_query)
-        intent = self._classify_intent(user_query, date)
+        intents = self._classify_intents(user_query, date)
+        intent = intents[0] if intents else "UNKNOWN"
 
-        print(f"[CONTROLLER] Intent: {intent}")
+        print(f"[CONTROLLER] Intent(s): {intents}")
         print(f"[CONTROLLER] Location: {location}")
         print(f"[CONTROLLER] Date: {date}")
         print(f"{'-'*60}")
 
         try:
-            # Route to appropriate handler
-            if intent == "IMAGE_GENERATION":
-                response = self._handle_image_generation(user_query, user_id)
-            elif intent == "RAG_QUERY":
-                response = self._handle_rag_query(user_query, user_id)
-            elif intent == "EVENT_QUERY_DB":
-                response = self._handle_event_query(date, user_query, location, user_id)
-            elif intent == "RECOMMENDATION":
-                response = self._handle_recommendation(location, date, user_id)
-            elif intent == "WEATHER_QUERY":
-                response = self._handle_weather_query(location, date, user_id)
-            elif intent == "TIME_QUERY":
-                response = self._handle_time_query(user_query, user_id)
-            else:
+            # Route to appropriate handler(s)
+            if not intents:
                 response = self._handle_unknown(user_query, routed_via_llm=True)
+            elif len(intents) == 1:
+                response = self._handle_intent(intents[0], user_query, location, date, user_id)
+            else:
+                # If image generation is mixed with other intents, prioritize image only
+                if "IMAGE_GENERATION" in intents and len(intents) > 1:
+                    response = self._handle_image_generation(user_query, user_id)
+                    response += "\n\n_Note: Image generation was prioritized over other requests._"
+                    intents = ["IMAGE_GENERATION"]
+                else:
+                    parts = []
+                    for it in intents:
+                        part = self._handle_intent(it, user_query, location, date, user_id)
+                        title = it.replace("_", " ").title()
+                        parts.append(f"**{title}:**\n{part}")
+                    response = "\n\n".join(parts)
 
             # ====================================================================
             # SECURITY STEP 2: Scan response before returning to user
@@ -159,7 +163,7 @@ class ControllerAgent:
             # Return response with security metadata
             result = {
                 "response": response,
-                "intent": intent
+                    "intent": "MULTI:" + "+".join(intents) if len(intents) > 1 else intent
             }
             
             # Add security info if available
@@ -248,6 +252,54 @@ class ControllerAgent:
             print(f"[ERROR] Intent classification failed: {e}")
             return "UNKNOWN"
 
+    def _classify_intents(self, query: str, extracted_date: str) -> list:
+        """Classify multiple intents using keyword heuristics with LLM fallback."""
+        q = query.lower()
+        intents = []
+
+        # Keyword-based detection (allow multiple)
+        if any(k in q for k in ["generate image", "create image", "create picture", "generate picture", "image of", "create a photo", "generate a photo"]):
+            intents.append("IMAGE_GENERATION")
+        if any(k in q for k in ["what time", "what date", "what day", "today", "tomorrow", "yesterday", "date is", "time is"]):
+            intents.append("TIME_QUERY")
+        if any(k in q for k in ["weather", "temperature", "forecast", "rain", "humidity", "uv"]):
+            intents.append("WEATHER_QUERY")
+        if any(k in q for k in ["recommend", "suggest", "what should i do", "ideas", "activities"]):
+            intents.append("RECOMMENDATION")
+        if any(k in q for k in ["events", "event", "show me", "list events", "how much", "price", "capacity", "tickets"]):
+            intents.append("EVENT_QUERY_DB")
+        if any(k in q for k in ["history", "2026", "future", "next year"]):
+            intents.append("RAG_QUERY")
+
+        # If we found multiple, return in a stable order
+        if intents:
+            order = ["TIME_QUERY", "WEATHER_QUERY", "EVENT_QUERY_DB", "RECOMMENDATION", "RAG_QUERY", "IMAGE_GENERATION"]
+            deduped = []
+            for it in order:
+                if it in intents and it not in deduped:
+                    deduped.append(it)
+            return deduped
+
+        # Fallback to single-intent LLM classification
+        single = self._classify_intent(query, extracted_date)
+        return [single] if single else []
+
+    def _handle_intent(self, intent: str, user_query: str, location: str, date: str, user_id: str) -> str:
+        """Dispatch a single intent to its handler."""
+        if intent == "IMAGE_GENERATION":
+            return self._handle_image_generation(user_query, user_id)
+        if intent == "RAG_QUERY":
+            return self._handle_rag_query(user_query, user_id)
+        if intent == "EVENT_QUERY_DB":
+            return self._handle_event_query(date, user_query, location, user_id)
+        if intent == "RECOMMENDATION":
+            return self._handle_recommendation(location, date, user_id)
+        if intent == "WEATHER_QUERY":
+            return self._handle_weather_query(location, date, user_id)
+        if intent == "TIME_QUERY":
+            return self._handle_time_query(user_query, user_id)
+        return self._handle_unknown(user_query, routed_via_llm=True)
+
     def _handle_recommendation(self, location: str, date: str, user_id: str = "anonymous") -> str:
         """Handle recommendation requests."""
         print(f"[RECOMMENDATION] Generating for {location} on {date}")
@@ -311,6 +363,7 @@ class ControllerAgent:
             2. If the user asks specific questions (e.g., "how much for 2 people", "is there anything cheap"), calculate the answer or filter based on the data provided.
             3. Do not make up information not present in the event list.
             4. Be concise but engaging.
+            5. Use clear punctuation and spacing in full sentences.
             """
 
             response = self.llm.chat.completions.create(
@@ -319,10 +372,18 @@ class ControllerAgent:
                     {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.7
+                temperature=0.3
             )
             
-            return response.choices[0].message.content
+            text = response.choices[0].message.content
+            text = re.sub(r"asthepriceperpersonis", "as the price per person is", text, flags=re.IGNORECASE)
+            # Fix common spacing/punctuation glitches from LLM output
+            text = re.sub(r"\.(?=[A-Za-z])", ". ", text)
+            text = re.sub(r",(?!\s)", ", ", text)
+            text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+            text = re.sub(r"(?<=[0-9])(?=[A-Za-z])", " ", text)
+            text = re.sub(r"\s{2,}", " ", text).strip()
+            return text
 
         except Exception as e:
             return f"Error processing event query: {str(e)}"
