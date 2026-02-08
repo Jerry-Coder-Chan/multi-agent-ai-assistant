@@ -20,7 +20,8 @@ class ControllerAgent:
         rag_agent,
         image_agent,
         openai_api_key: str,
-        security_agent: Optional[SecurityAgent] = None
+        security_agent: Optional[SecurityAgent] = None,
+        search_agent=None
     ):
         self.chat_agent = chat_agent
         self.weather_agent = weather_agent
@@ -29,6 +30,7 @@ class ControllerAgent:
         self.rag_agent = rag_agent
         self.image_agent = image_agent
         self.llm = openai.OpenAI(api_key=openai_api_key)
+        self.search_agent = search_agent
         # Default time zone for time queries
         self.last_time_tz = "Asia/Singapore"
         self.last_time_location_name = "Singapore"
@@ -404,11 +406,18 @@ class ControllerAgent:
 
             # If RAG couldn't answer, fall back to friendly LLM response
             if self._is_rag_no_answer(answer):
-                return self._handle_unknown(query, routed_via_llm=True)
+                # fallback to LLM, then search if still no answer
+                fallback = self._handle_unknown(query, routed_via_llm=True)
+                if self._is_llm_no_answer(fallback):
+                    return self._handle_search(query, user_id)
+                return fallback
 
             return answer
         except Exception as e:
-            return self._handle_unknown(query, routed_via_llm=True)
+            fallback = self._handle_unknown(query, routed_via_llm=True)
+            if self._is_llm_no_answer(fallback):
+                return self._handle_search(query, user_id)
+            return fallback
 
     def _is_rag_no_answer(self, answer: str) -> bool:
         """Heuristic to detect when RAG has no useful answer."""
@@ -422,6 +431,26 @@ class ControllerAgent:
             "not contain information",
             "cannot find",
             "no information",
+        ]
+        return any(s in lowered for s in signals)
+
+    def _is_llm_no_answer(self, answer: str) -> bool:
+        """Heuristic to detect when LLM refuses or lacks info."""
+        if not answer:
+            return True
+        lowered = answer.lower()
+        signals = [
+            "i don't have",
+            "i do not have",
+            "i can't access",
+            "cannot access",
+            "no real-time",
+            "not have real-time",
+            "please check the latest",
+            "check the latest",
+            "i'm sorry",
+            "i cannot assist",
+            "i can't assist",
         ]
         return any(s in lowered for s in signals)
 
@@ -641,6 +670,25 @@ class ControllerAgent:
             return f"{reply}\n\n{reminder}"
         except Exception:
             return reminder
+
+    def _handle_search(self, query: str, user_id: str = "anonymous") -> str:
+        """Fallback live search via SerpAPI if configured."""
+        if not self.search_agent or not getattr(self.search_agent, "is_enabled", lambda: False)():
+            return "Live search is not configured."
+        try:
+            results = self.search_agent.search(query)
+            # Optional security scan of search output
+            if self.security_enabled:
+                _ = self.security_agent.scan_interaction(
+                    prompt=f"Search query: {query}",
+                    response=results,
+                    ai_model="search",
+                    app_user=user_id,
+                    agent_name="search_agent"
+                )
+            return f"**Live Web Search:**\n{results}"
+        except Exception as e:
+            return f"Search error: {str(e)}"
 
     def _looks_time_sensitive(self, query: str) -> bool:
         """Detect likely time-sensitive queries (news/sports/results)."""

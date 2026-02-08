@@ -62,7 +62,7 @@ echo -e "${GREEN}✓ Image built successfully${NC}"
 echo -e "${YELLOW}Checking for secrets...${NC}"
 SECRETS_EXIST=true
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY; do
     if ! gcloud secrets describe $SECRET &> /dev/null; then
         echo -e "${RED}✗ Secret $SECRET not found${NC}"
         SECRETS_EXIST=false
@@ -78,6 +78,7 @@ if [ "$SECRETS_EXIST" = false ]; then
     echo "echo -n 'your_openai_key' | gcloud secrets create OPENAI_API_KEY --data-file=-"
     echo "echo -n 'your_weather_key' | gcloud secrets create WEATHER_API_KEY --data-file=-"
     echo "echo -n 'your_airs_key' | gcloud secrets create AIRS_API_KEY --data-file=-"
+    echo "echo -n 'your_serpapi_key' | gcloud secrets create SERPAPI_API_KEY --data-file=-"
     echo ""
     exit 1
 fi
@@ -87,7 +88,7 @@ echo -e "${YELLOW}Granting secret access...${NC}"
 PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
 SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY; do
     gcloud secrets add-iam-policy-binding $SECRET \
         --member="serviceAccount:${SERVICE_ACCOUNT}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -106,7 +107,7 @@ gcloud run deploy ${NEW_SERVICE} \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}Error: Deployment failed${NC}"

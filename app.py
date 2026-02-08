@@ -20,6 +20,7 @@ from agents.rag_agent import RAGAgent
 from agents.image_agent import ImageAgent
 from agents.controller_agent import ControllerAgent
 from agents.security_agent import SecurityAgent
+from agents.search_agent import SearchAgent
 
 # ============================================================================
 # DATABASE INITIALIZATION FUNCTION
@@ -414,9 +415,11 @@ with st.sidebar:
     env_openai_key = os.environ.get('OPENAI_API_KEY')
     env_weather_key = os.environ.get('WEATHER_API_KEY')
     env_airs_key = os.environ.get('AIRS_API_KEY')
+    env_serp_key = os.environ.get('SERPAPI_API_KEY')
     openai_api_key = env_openai_key
     weather_api_key = env_weather_key
     airs_api_key = env_airs_key
+    serpapi_api_key = env_serp_key
 
     # API Keys
     st.subheader("API Keys")
@@ -448,6 +451,18 @@ with st.sidebar:
         )
         if airs_api_key:
             st.success("✅ AIRS API Key loaded")
+
+    # SerpAPI Key Logic (optional)
+    if env_serp_key:
+        serpapi_api_key = env_serp_key
+        st.success("✅ SerpAPI Key loaded")
+    else:
+        serpapi_api_key = st.text_input(
+            "SerpAPI Key (Optional)",
+            type="password",
+            key="serpapi_key",
+            help="Enables live web search fallback"
+        )
     
     # Settings
     st.subheader("Settings")
@@ -516,6 +531,7 @@ with st.sidebar:
                     recommendation_agent = RecommendationAgent(openai_api_key)
                     rag_agent = RAGAgent(openai_api_key, pdf_path, llm_model)
                     image_agent = ImageAgent(openai_api_key)
+                    search_agent = SearchAgent(serpapi_api_key) if serpapi_api_key else None
                     
                     # Initialize SecurityAgent if API key provided and enabled
                     security_agent = None
@@ -548,7 +564,8 @@ with st.sidebar:
                         rag_agent,
                         image_agent,
                         openai_api_key,
-                        security_agent=security_agent
+                        security_agent=security_agent,
+                        search_agent=search_agent
                     )
                     
                     st.session_state.initialized = True
