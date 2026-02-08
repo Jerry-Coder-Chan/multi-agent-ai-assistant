@@ -1,7 +1,12 @@
 import streamlit as st
 import os
 import sqlite3
+import json
+import hashlib
+import base64
 from datetime import datetime, timezone, timedelta
+import streamlit.components.v1 as components
+from openai import OpenAI
 try:
     from google.colab import userdata
 except ImportError:
@@ -111,6 +116,7 @@ os.makedirs(data_dir, exist_ok=True)
 
 # Define database path
 db_path = os.path.join(data_dir, "events.db")
+
 
 # Initialize database if not already done in this session
 if 'db_initialized' not in st.session_state:
@@ -253,6 +259,122 @@ if 'initialized' not in st.session_state:
     st.session_state.security_events = []
     st.session_state.last_security_verdict = None
     st.session_state.last_airs_request = None
+    st.session_state.voice_enabled = False
+    st.session_state.voice_rate = 1.0
+    st.session_state.voice_pitch = 1.0
+    st.session_state.voice_volume = 1.0
+    st.session_state.voice_name = "marin"
+    st.session_state.last_spoken_hash = None
+    st.session_state.voice_greeted = False
+    st.session_state.tts_cache = {}
+
+def _speak_text(text, rate=1.0, pitch=1.0, volume=1.0, voice_name=""):
+    if not text:
+        return
+    payload = json.dumps({
+        "text": text,
+        "rate": rate,
+        "pitch": pitch,
+        "volume": volume,
+        "voiceName": voice_name
+    }).replace("</", "<\\/")
+    components.html(
+        f"""
+        <script>
+        (() => {{
+            const data = {payload};
+            if (!data.text) return;
+            if (!window.speechSynthesis) return;
+            const speak = () => {{
+                const synth = window.speechSynthesis;
+                const utter = new SpeechSynthesisUtterance(data.text);
+                utter.rate = data.rate;
+                utter.pitch = data.pitch;
+                utter.volume = data.volume;
+                if (data.voiceName) {{
+                    const voices = synth.getVoices() || [];
+                    const target = String(data.voiceName).trim().toLowerCase();
+                    let match = voices.find(v => v.name === data.voiceName);
+                    if (!match) {{
+                        match = voices.find(v => v.name.toLowerCase() === target);
+                    }}
+                    if (!match) {{
+                        match = voices.find(v => v.name.toLowerCase().includes(target));
+                    }}
+                    if (match) utter.voice = match;
+                }}
+                synth.cancel();
+                synth.speak(utter);
+            }};
+            const voices = window.speechSynthesis.getVoices();
+            if (voices && voices.length > 0) {{
+                speak();
+            }} else {{
+                window.speechSynthesis.onvoiceschanged = () => speak();
+            }}
+        }})();
+        </script>
+        """,
+        height=0
+    )
+
+def _play_audio_bytes(audio_bytes, mime_type="audio/mpeg"):
+    if not audio_bytes:
+        return
+    b64 = base64.b64encode(audio_bytes).decode("ascii")
+    components.html(
+        f"""
+        <audio autoplay="true" controls="false" class="assistant-audio">
+            <source src="data:{mime_type};base64,{b64}">
+        </audio>
+        """,
+        height=0
+    )
+
+
+def _openai_tts(text, model, voice, api_key):
+    client = OpenAI(api_key=api_key)
+    response = client.audio.speech.create(
+        model=model,
+        voice=voice,
+        input=text,
+        response_format="mp3"
+    )
+    return response.read()
+
+def _get_tts_audio(text, api_key, model="gpt-4o-mini-tts", voice="marin"):
+    cache = st.session_state.get("tts_cache", {})
+    text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if text_hash in cache:
+        return cache[text_hash]
+    audio_bytes = _openai_tts(text, model=model, voice=voice, api_key=api_key)
+    cache[text_hash] = audio_bytes
+    st.session_state.tts_cache = cache
+    return audio_bytes
+
+def _play_voice(text, allow_autoplay=False):
+    if not text:
+        return
+    active_openai_key = os.environ.get("OPENAI_API_KEY") or st.session_state.get("openai_key", "")
+    if active_openai_key:
+        try:
+            audio_bytes = _get_tts_audio(
+                text,
+                api_key=active_openai_key,
+                model="gpt-4o-mini-tts",
+                voice=st.session_state.get("voice_name", "marin")
+            )
+            _play_audio_bytes(audio_bytes, mime_type="audio/mpeg")
+            return
+        except Exception:
+            pass
+    _speak_text(
+        text,
+        rate=st.session_state.get("voice_rate", 1.0),
+        pitch=st.session_state.get("voice_pitch", 1.0),
+        volume=st.session_state.get("voice_volume", 1.0),
+        voice_name="Karen"
+    )
 
 def _redact_sensitive_fields(obj):
     """Redact common secret fields before displaying."""
@@ -287,14 +409,17 @@ with st.sidebar:
         st.warning("⚠️ Database initialization pending")
     
     st.divider()
-    
-    # API Keys
-    st.subheader("API Keys")
-    
-    # Try to load keys from environment variables
+
+    # Try to load keys from environment variables early for voice audition
     env_openai_key = os.environ.get('OPENAI_API_KEY')
     env_weather_key = os.environ.get('WEATHER_API_KEY')
     env_airs_key = os.environ.get('AIRS_API_KEY')
+    openai_api_key = env_openai_key
+    weather_api_key = env_weather_key
+    airs_api_key = env_airs_key
+
+    # API Keys
+    st.subheader("API Keys")
     
     # OpenAI Key Logic
     if env_openai_key:
@@ -328,7 +453,7 @@ with st.sidebar:
     st.subheader("Settings")
     llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
     max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
-    
+
     # Security Settings (only show if AIRS key provided)
     if airs_api_key:
         st.subheader("🔒 Security Settings")
@@ -373,7 +498,8 @@ with st.sidebar:
         st.info("💡 Add AIRS API Key to enable runtime security monitoring")
     
     # Initialize button
-    if st.button("🚀 Initialize Assistant", type="primary"):
+    init_label = "🔄 Restart Assistant" if st.session_state.get("initialized") else "🚀 Initialize Assistant"
+    if st.button(init_label, type="primary"):
         if not openai_api_key or not weather_api_key:
             st.error("Please provide both API keys!")
         else:
@@ -426,9 +552,13 @@ with st.sidebar:
                     )
                     
                     st.session_state.initialized = True
+                    st.session_state.voice_greeted = False
                     st.success("✅ Assistant initialized successfully!")
                 except Exception as e:
                     st.error(f"Initialization failed: {str(e)}")
+
+    if st.session_state.get("initialized"):
+        st.success("✅ Assistant initialized successfully!")
     
     # Clear conversation
     if st.button("🗑️ Clear Conversation"):
@@ -436,6 +566,30 @@ with st.sidebar:
         if st.session_state.controller:
             st.session_state.controller.chat_agent.clear_history()
         st.rerun()
+
+    # Voice Output
+    st.subheader("Voice Output")
+    voice_enabled = st.checkbox(
+        "Assistant Voice",
+        value=st.session_state.get("voice_enabled", False)
+    )
+    st.caption("AI-generated voice via OpenAI TTS when a key is available.")
+
+    st.session_state.voice_enabled = voice_enabled
+    st.session_state.voice_rate = st.session_state.get("voice_rate", 1.0)
+    st.session_state.voice_pitch = st.session_state.get("voice_pitch", 1.0)
+    st.session_state.voice_volume = st.session_state.get("voice_volume", 1.0)
+    st.session_state.voice_name = st.session_state.get("voice_name", "marin")
+
+    if st.session_state.get("initialized") and voice_enabled and not st.session_state.get("voice_greeted"):
+        greeting_text = (
+            "Welcome to the Multi-Agent AI Assistant. I can help with time, weather, "
+            "event search, recommendations, and image generation. You can turn my voice "
+            "on or off in the sidebar anytime using the Assistant Voice button. "
+            "Have a nice day!"
+        )
+        _play_voice(greeting_text, allow_autoplay=True)
+        st.session_state.voice_greeted = True
     
     # Info section
     st.divider()
@@ -531,7 +685,7 @@ else:
     def _render_response(text: str):
         st.markdown(f'<div class="assistant-text">{text}</div>', unsafe_allow_html=True)
     # Display chat messages
-    for message in st.session_state.messages:
+    for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             # Display Intent Badge if present
             if "intent" in message:
@@ -648,6 +802,10 @@ else:
                             unsafe_allow_html=True
                         )
                     _render_response(response)
+
+                    # Voice playback controlled by Assistant Voice toggle
+                    if st.session_state.get("voice_enabled") and st.session_state.get("initialized"):
+                        _play_voice(response)
                     
                     # Add assistant message with intent
                     st.session_state.messages.append({
@@ -660,6 +818,7 @@ else:
                     error_msg = f"Error: {str(e)}"
                     st.error(error_msg)
                     st.session_state.messages.append({"role": "assistant", "content": error_msg})
+
 
 # Footer
 st.divider()
