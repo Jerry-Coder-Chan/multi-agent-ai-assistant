@@ -29,6 +29,9 @@ class ControllerAgent:
         self.rag_agent = rag_agent
         self.image_agent = image_agent
         self.llm = openai.OpenAI(api_key=openai_api_key)
+        # Default time zone for time queries
+        self.last_time_tz = "Asia/Singapore"
+        self.last_time_location_name = "Singapore"
         
         # Security integration
         self.security_agent = security_agent
@@ -520,11 +523,20 @@ class ControllerAgent:
                 target_tz = tz
                 location_name = city.title()
                 break
-        
-        # Get the appropriate time
+
+        # Remember last requested time zone (time queries only)
         if target_tz:
-            now = datetime.now(ZoneInfo(target_tz))
-            location_str = f" in {location_name}"
+            self.last_time_tz = target_tz
+            self.last_time_location_name = location_name
+        
+        # Get the appropriate time (default to last requested, Singapore initially)
+        if ZoneInfo:
+            if target_tz:
+                now = datetime.now(ZoneInfo(target_tz))
+                location_str = f" in {location_name}"
+            else:
+                now = datetime.now(ZoneInfo(self.last_time_tz))
+                location_str = f" in {self.last_time_location_name}"
         else:
             now = datetime.now()
             location_str = " (local time)"
