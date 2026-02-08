@@ -431,6 +431,10 @@ class ControllerAgent:
             "not contain information",
             "cannot find",
             "no information",
+            "i don't have information",
+            "i do not have information",
+            "i don't have",
+            "i do not have",
         ]
         return any(s in lowered for s in signals)
 
