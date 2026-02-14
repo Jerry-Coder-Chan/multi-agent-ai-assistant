@@ -12,6 +12,9 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
+import csv
+import os
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +31,7 @@ class AIRSResponse:
     action_taken: str = "ALLOW"
     scan_time_ms: Optional[float] = None
     details: Optional[Dict] = None
+    attack_mapping: Optional[List[Dict]] = None
 
 
 class SecurityAgent:
@@ -73,6 +77,9 @@ class SecurityAgent:
         self.enable_response_scan = enable_response_scan
         self.block_on_threat = block_on_threat
         self.timeout = timeout
+        self.last_prompt = None
+        self.last_response = None
+        self.taxonomy = self._load_taxonomy()
         
         # Track activation status
         self.activation_status = "unknown"
@@ -140,6 +147,8 @@ class SecurityAgent:
             start_time = time.time()
             
             # Build AIRS API request
+            self.last_prompt = prompt
+            self.last_response = response
             airs_request = self._build_airs_request(
                 prompt=prompt if scan_prompt else "",
                 response=response if scan_response else "",
@@ -314,13 +323,20 @@ class SecurityAgent:
             else:
                 action_taken = "ALLOW"
             
+            mapping = self._map_attack(self.last_prompt or "", details)
+            # attach mapping into details for UI
+            if isinstance(details, dict):
+                details = {**details, "_attack_mapping": mapping}
+                airs_response = {**airs_response, "details": details}
+
             return AIRSResponse(
                 is_safe=is_safe,
                 threat_detected=threat_detected,
                 threat_type=threat_type,
                 risk_score=risk_score,
                 action_taken=action_taken,
-                details=airs_response
+                details=airs_response,
+                attack_mapping=mapping
             )
             
         except Exception as e:
@@ -331,6 +347,93 @@ class SecurityAgent:
                 action_taken="PARSE_ERROR",
                 details={"error": str(e), "raw_response": airs_response}
             )
+
+    def _load_taxonomy(self) -> List[Dict]:
+        """Load prompt-attack taxonomy from CSV."""
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            path = os.path.join(base_dir, "data", "Prompt_Engineering_Attacks.csv")
+            rows: List[Dict] = []
+            with open(path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if not row.get("Type"):
+                        continue
+                    rows.append({
+                        "Type": row.get("Type", "").strip(),
+                        "Category": row.get("Category", "").strip(),
+                        "Definition": row.get("Definition", "").strip(),
+                        "Example": row.get("Example", "").strip(),
+                        "Impact": row.get("Impact", "").strip(),
+                    })
+            return rows
+        except Exception:
+            return []
+
+    def _find_taxonomy(self, type_name: str, category: Optional[str] = None) -> Optional[Dict]:
+        for row in self.taxonomy:
+            if row["Type"].lower() == type_name.lower():
+                if category:
+                    if row["Category"].lower() == category.lower():
+                        return row
+                else:
+                    return row
+        return None
+
+    def _map_attack(self, prompt: str, details: Dict) -> List[Dict]:
+        """Map AIRS flags + prompt heuristics to taxonomy entries."""
+        prompt_l = (prompt or "").lower()
+        mappings: List[Dict] = []
+
+        def add(type_name: str, category: Optional[str], reason: str):
+            row = self._find_taxonomy(type_name, category)
+            if not row:
+                return
+            mappings.append({
+                "type": row["Type"],
+                "category": row["Category"],
+                "impact": row["Impact"],
+                "reason": reason,
+            })
+
+        # Heuristics from prompt text
+        if re.search(r"(ignore|disregard|neglect).*(instructions|directives)", prompt_l):
+            add("prompt injection", "Objective Manipulation", "Heuristic: instruction override")
+        if "system prompt" in prompt_l or "initial system prompt" in prompt_l or "developer message" in prompt_l:
+            add("prompt injection", "Prompt Leakage", "Heuristic: system prompt request")
+        if "system mode" in prompt_l:
+            add("prompt injection", "System Mode", "Heuristic: system mode keyword")
+        if "base64" in prompt_l or re.search(r"%[0-9a-f]{2}", prompt_l):
+            add("Obfuscation", "Encoding Schemes", "Heuristic: encoding scheme")
+        if "cipher" in prompt_l:
+            add("Obfuscation", "Cipher Text", "Heuristic: cipher keyword")
+        if "repeat" in prompt_l and re.search(r"\b\d{3,}\b", prompt_l):
+            add("prompt injection", "Repeat-Instruction Attacks", "Heuristic: repeat many times")
+        if "<|endoftext|>" in prompt_l:
+            add("prompt injection", "Repeated Token", "Heuristic: endoftext token")
+        if "grandma" in prompt_l or "grandmother" in prompt_l:
+            add("prompt injection", "Grandma Appeals", "Heuristic: grandma appeal")
+        if "likert" in prompt_l:
+            add("Social Engineering", "Bad Likert Judge", "Heuristic: Likert judge")
+        if "hypothetically" in prompt_l or "imagine you're advising" in prompt_l:
+            add("Social Engineering", "Hypothetical Scenario", "Heuristic: hypothetical framing")
+        if "once upon a time" in prompt_l or "in a distant future" in prompt_l:
+            add("Social Engineering", "Storytelling", "Heuristic: storytelling framing")
+        if "roleplay" in prompt_l or "as a secret agent" in prompt_l or "as a hacker" in prompt_l:
+            add("Social Engineering", "Character Roleplay", "Heuristic: roleplay")
+        if "rm -rf" in prompt_l or "runtime.getruntime().exec" in prompt_l or "disable windows defender" in prompt_l:
+            add("prompt injection", "Remote Code Execution", "Heuristic: RCE instruction")
+
+        # AIRS flags-based mapping
+        prompt_detected = details.get("prompt_detected", {}) if isinstance(details, dict) else {}
+        if prompt_detected.get("injection") and not any(m["category"] for m in mappings):
+            add("prompt injection", "Objective Manipulation", "AIRS flag: injection")
+        if prompt_detected.get("dlp"):
+            add("prompt injection", "Leak Replay", "AIRS flag: dlp")
+        if prompt_detected.get("malicious_code"):
+            add("prompt injection", "Remote Code Execution", "AIRS flag: malicious_code")
+
+        return mappings
     
     def _update_stats(self, scan_result: AIRSResponse, scanned_prompt: bool, scanned_response: bool):
         """Update internal statistics"""

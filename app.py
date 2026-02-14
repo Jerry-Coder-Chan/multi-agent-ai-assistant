@@ -769,7 +769,21 @@ else:
                             if verdict_placeholder is not None:
                                 verdict = st.session_state.last_security_verdict
                                 if verdict:
-                                    verdict_placeholder.json(verdict)
+                                    mapping = None
+                                    try:
+                                        mapping = verdict.get("prompt", {}).get("details", {}).get("_attack_mapping")
+                                    except Exception:
+                                        mapping = None
+                                    if mapping:
+                                        lines = ["**Attack Classification (mapped):**"]
+                                        for m in mapping:
+                                            lines.append(
+                                                f"- **{m.get('type')} / {m.get('category')}** — "
+                                                f"Impact: {m.get('impact')} (Reason: {m.get('reason')})"
+                                            )
+                                        verdict_placeholder.markdown("\n".join(lines))
+                                    else:
+                                        verdict_placeholder.json(verdict)
                                 else:
                                     verdict_placeholder.info("No AIRS verdict yet.")
                             if payload_placeholder is not None:
