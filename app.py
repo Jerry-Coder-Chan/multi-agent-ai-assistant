@@ -5,6 +5,7 @@ import json
 import hashlib
 import base64
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone, timedelta
 import streamlit.components.v1 as components
 from openai import OpenAI
@@ -119,6 +120,49 @@ os.makedirs(data_dir, exist_ok=True)
 # Define database path
 db_path = os.path.join(data_dir, "events.db")
 
+# Asset cache paths
+asset_cache_dir = os.path.join(data_dir, "asset_cache")
+bg_cache_dir = os.path.join(asset_cache_dir, "backgrounds")
+os.makedirs(bg_cache_dir, exist_ok=True)
+mascot_cache_dir = os.path.join(asset_cache_dir, "mascot")
+os.makedirs(mascot_cache_dir, exist_ok=True)
+
+def _location_cache_path(location: str) -> str:
+    key = hashlib.md5(location.strip().lower().encode()).hexdigest()[:16]
+    return os.path.join(bg_cache_dir, f"{key}.jpg")
+
+def _image_to_data_uri(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower().lstrip(".") or "jpeg"
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+    with open(path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
+
+def _get_cached_background(location: str):
+    location = location.strip() or "Singapore"
+    cache_path = _location_cache_path(location)
+    if not os.path.exists(cache_path):
+        try:
+            query = urllib.parse.quote_plus(f"{location} skyline")
+            url = f"https://source.unsplash.com/1600x900/?{query}"
+            with urllib.request.urlopen(url, timeout=8) as response:
+                image_bytes = response.read()
+            with open(cache_path, "wb") as f:
+                f.write(image_bytes)
+        except Exception:
+            return None
+    try:
+        return _image_to_data_uri(cache_path)
+    except Exception:
+        return None
+
+def _get_saved_mascot_path():
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        candidate = os.path.join(mascot_cache_dir, f"mascot.{ext}")
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
 
 # Initialize database if not already done in this session
 if 'db_initialized' not in st.session_state:
@@ -205,7 +249,8 @@ st.markdown("""
         margin: 0.4rem 0 0.6rem 0;
     }
     .landing-wrap {
-        margin: 1.2rem auto 0 auto;
+        position: relative;
+        margin: 0.5rem auto 0 auto;
         padding: 1.5rem 1.8rem 2.2rem 1.8rem;
         max-width: 1080px;
         background: rgba(255, 255, 255, 0.86);
@@ -213,6 +258,20 @@ st.markdown("""
         border: 1px solid rgba(255, 255, 255, 0.55);
         box-shadow: 0 18px 60px rgba(21, 25, 36, 0.25);
         backdrop-filter: blur(12px);
+        overflow: hidden;
+    }
+    .landing-backdrop {
+        position: absolute;
+        inset: 0;
+        background-size: cover;
+        background-position: center;
+        opacity: 0.45;
+        filter: saturate(1.1);
+        z-index: 0;
+    }
+    .landing-wrap > *:not(.landing-backdrop) {
+        position: relative;
+        z-index: 1;
     }
     .landing-hero {
         position: relative;
@@ -220,6 +279,11 @@ st.markdown("""
         grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr);
         gap: 1.5rem;
         align-items: center;
+    }
+    .landing-hero.centered {
+        grid-template-columns: 1fr;
+        justify-items: center;
+        text-align: center;
     }
     .landing-title {
         font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
@@ -249,6 +313,21 @@ st.markdown("""
     .mascot-stage {
         position: relative;
         min-height: 360px;
+        width: 100%;
+        max-width: 860px;
+        margin: 0 auto;
+    }
+    .mascot-bg {
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        width: 360px;
+        height: 360px;
+        border-radius: 28px;
+        background-size: cover;
+        background-position: center top;
+        box-shadow: 0 18px 40px rgba(21, 30, 44, 0.28);
+        z-index: 1;
     }
     .mascot-core {
         position: absolute;
@@ -264,29 +343,80 @@ st.markdown("""
     }
     .bubble {
         position: absolute;
-        padding: 0.6rem 0.9rem;
-        border-radius: 18px;
-        background: rgba(17, 29, 40, 0.82);
-        color: #ffffff;
-        font-size: 0.8rem;
+        padding: 0.55rem 0.85rem;
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.5);
+        color: #243645;
+        font-size: 0.88rem;
         font-weight: 600;
-        box-shadow: 0 12px 24px rgba(19, 24, 34, 0.25);
+        box-shadow:
+            inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+            inset 0 8px 18px rgba(255, 255, 255, 0.35),
+            0 14px 28px rgba(19, 24, 34, 0.16);
         width: max-content;
         max-width: 190px;
+        border: 1px solid rgba(255, 255, 255, 0.65);
+        z-index: 3;
+        line-height: 1.15;
+        pointer-events: none;
+        backdrop-filter: blur(10px) saturate(1.2);
+        overflow: hidden;
+    }
+    .bubble::after {
+        content: "";
+        position: absolute;
+        inset: -60% -40%;
+        background: linear-gradient(120deg, transparent 35%, rgba(255, 255, 255, 0.7) 50%, transparent 65%);
+        transform: translateX(-120%);
+        animation: bubbleSheen 7s ease-in-out infinite;
+        opacity: 0.8;
+        pointer-events: none;
+    }
+    .bubble-1::after { animation-delay: 0s; }
+    .bubble-2::after { animation-delay: 1s; }
+    .bubble-3::after { animation-delay: 2s; }
+    .bubble-4::after { animation-delay: 3s; }
+    .bubble-5::after { animation-delay: 4s; }
+    .bubble-6::after { animation-delay: 5s; }
+    .bubble-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
     }
     .bubble span {
         display: block;
         font-weight: 400;
-        font-size: 0.72rem;
+        font-size: 0.76rem;
         opacity: 0.75;
-        margin-top: 0.2rem;
+        margin-top: 0.12rem;
     }
-    .bubble-1 { top: 0; left: 10%; transform: translateX(-15%); }
-    .bubble-2 { top: 18%; right: 0; transform: translateX(5%); }
-    .bubble-3 { bottom: 8%; left: -2%; }
-    .bubble-4 { bottom: 18%; right: -4%; }
-    .bubble-5 { top: 40%; left: -6%; }
-    .bubble-6 { top: 45%; right: -6%; }
+    .bubble .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 9px;
+        background: rgba(31, 122, 140, 0.18);
+        font-size: 0.82rem;
+    }
+    .landing-prompt .stTextInput>div>div>input {
+        border-radius: 16px;
+        padding: 0.85rem 1.1rem;
+        border: 2px solid rgba(31, 122, 140, 0.45);
+        background: rgba(255, 255, 255, 0.9);
+        font-size: 1rem;
+        box-shadow: 0 10px 24px rgba(19, 24, 34, 0.12);
+    }
+    .bubble-float {
+        animation: bubbleFloat 7s ease-in-out infinite;
+    }
+    .bubble-1 { top: 6%; left: 4%; animation-delay: 0s; }
+    .bubble-2 { top: 10%; right: 4%; animation-delay: 0.8s; }
+    .bubble-3 { top: 44%; left: 0.5%; animation-delay: 1.6s; }
+    .bubble-4 { top: 44%; right: 0.5%; animation-delay: 2.4s; }
+    .bubble-5 { bottom: 6%; left: 4%; animation-delay: 3.2s; }
+    .bubble-6 { bottom: 6%; right: 4%; animation-delay: 4s; }
     .landing-prompt {
         margin-top: 1.2rem;
         text-align: center;
@@ -325,6 +455,16 @@ st.markdown("""
         0% { transform: translateY(0px); }
         50% { transform: translateY(-10px); }
         100% { transform: translateY(0px); }
+    }
+    @keyframes bubbleFloat {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-8px); }
+        100% { transform: translateY(0px); }
+    }
+    @keyframes bubbleSheen {
+        0% { transform: translateX(-120%); }
+        55% { transform: translateX(30%); }
+        100% { transform: translateX(140%); }
     }
     @media (max-width: 980px) {
         .landing-hero {
@@ -790,11 +930,82 @@ with st.sidebar:
     - 🔒 **Security** - AIRS runtime protection
     """)
 
+# Background image (cached per location)
+landing_location = (st.session_state.get("landing_location") or "Singapore").strip() or "Singapore"
+background_data_uri = _get_cached_background(landing_location)
+if background_data_uri:
+    banner_bg_style = f"background-image: linear-gradient(140deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.4) 40%, rgba(255, 255, 255, 0.15) 100%), url('{background_data_uri}');"
+else:
+    banner_bg_style = "background: linear-gradient(140deg, #d9f8ff 0%, #fff1e6 55%, #ffffff 100%);"
+
 # Main chat interface
-st.title("🤖 Multi-Agent AI Assistant")
-st.caption("Your intelligent event and activity companion")
-app_version = os.environ.get("APP_VERSION", "dev")
-st.caption(f"Version: {app_version}")
+
+# Landing hero (shown before and after initialization)
+mascot_path = st.session_state.get("mascot_path") or _get_saved_mascot_path()
+mascot_data_uri = ""
+if mascot_path:
+    mascot_data_uri = _image_to_data_uri(mascot_path)
+    mascot_layer = f'<div class="mascot-bg" style="background-image: url(\'{mascot_data_uri}\');"></div>'
+else:
+    mascot_markup = """
+        <svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <linearGradient id="helm" x1="30" y1="40" x2="230" y2="220" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#FFD5EC"/>
+                    <stop offset="1" stop-color="#B9E1FF"/>
+                </linearGradient>
+                <linearGradient id="visor" x1="70" y1="95" x2="190" y2="165" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#2E3C4A"/>
+                    <stop offset="1" stop-color="#101821"/>
+                </linearGradient>
+            </defs>
+            <circle cx="130" cy="140" r="98" fill="url(#helm)"/>
+            <ellipse cx="130" cy="150" rx="78" ry="62" fill="url(#visor)"/>
+            <circle cx="100" cy="150" r="10" fill="#FFD1A1"/>
+            <circle cx="160" cy="150" r="10" fill="#FFD1A1"/>
+            <circle cx="130" cy="78" r="16" fill="#FFE6A8"/>
+            <rect x="106" y="173" width="48" height="18" rx="9" fill="#FF8A7A"/>
+            <path d="M85 110C95 95 115 90 130 90C145 90 165 95 175 110" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+            <circle cx="40" cy="145" r="18" fill="#B7C8FF"/>
+            <circle cx="220" cy="145" r="18" fill="#B7C8FF"/>
+            <rect x="120" y="20" width="20" height="46" rx="10" fill="#C5F2FF"/>
+            <circle cx="130" cy="18" r="14" fill="#FFE6A8"/>
+            <circle cx="130" cy="18" r="6" fill="#FF8A7A"/>
+        </svg>
+    """
+    mascot_layer = f'<div class="mascot-core">{mascot_markup}</div>'
+
+st.markdown(
+    f"""
+    <div class="landing-wrap">
+        <div class="landing-backdrop" style="{banner_bg_style}"></div>
+        <div class="landing-hero centered">
+            <div class="landing-title">Meet Amanda - your Multi-Agent AI Assistant</div>
+            <div class="mascot-stage">
+                <div class="bubble bubble-1 bubble-float"><div class="bubble-title"><span class="icon">⏰</span>Time</div><span>Current date and time around the world</span></div>
+                <div class="bubble bubble-2 bubble-float"><div class="bubble-title"><span class="icon">☁️</span>Weather</div><span>Realtime weather forecast</span></div>
+                <div class="bubble bubble-3 bubble-float"><div class="bubble-title"><span class="icon">🧭</span>Activities</div><span>Indoor &amp; outdoor actvities for today and tomorrow</span></div>
+                <div class="bubble bubble-4 bubble-float"><div class="bubble-title"><span class="icon">🎯</span>Recommendations</div><span>Activity recommendations</span></div>
+                <div class="bubble bubble-5 bubble-float"><div class="bubble-title"><span class="icon">📚</span>2026 Events</div><span>Key events in 2026</span></div>
+                <div class="bubble bubble-6 bubble-float"><div class="bubble-title"><span class="icon">🎨</span>Images</div><span>Generate fun images</span></div>
+                {mascot_layer}
+            </div>
+        </div>
+        <div class="landing-prompt">
+    """,
+    unsafe_allow_html=True,
+)
+
+if not background_data_uri:
+    st.info("City background image not available. Upload one in the sidebar or check network access.")
+
+st.markdown(
+    """
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # Prisma AIRS status indicator (for demo visibility)
 airs_status = "OFF"
@@ -814,116 +1025,13 @@ else:
 
 # Display initialization status
 if not st.session_state.initialized:
-    if "landing_location" not in st.session_state:
-        st.session_state.landing_location = "Singapore"
-
-    raw_location = st.text_input(
-        "Location of interest",
-        value=st.session_state.landing_location,
-        help="Updates the background scene in real time.",
-        key="landing_location",
-    )
-    landing_location = raw_location.strip() or "Singapore"
-    if landing_location != raw_location:
-        st.session_state.landing_location = landing_location
-
-    location_query = urllib.parse.quote_plus(f"{landing_location} skyline")
-    background_url = f"https://source.unsplash.com/1600x900/?{location_query}"
-
-    st.markdown(
-        f"""
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
-            .stApp {{
-                background-image:
-                    linear-gradient(180deg, rgba(15, 23, 32, 0.45) 0%, rgba(15, 23, 32, 0.2) 45%, rgba(255, 255, 255, 0.88) 100%),
-                    url('{background_url}');
-                background-size: cover;
-                background-position: center;
-                background-attachment: fixed;
-            }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"""
-        <div class="landing-wrap">
-            <div class="landing-hero">
-                <div>
-                    <div class="landing-badge">🌍 Now viewing {landing_location}</div>
-                    <div class="landing-title">Meet your multi-agent copilots.</div>
-                    <div class="landing-subtitle">
-                        A friendly crew that can plan, search, recommend, and design on demand.
-                        Ask one question, and the right expert agent jumps in instantly.
-                    </div>
-                    <div class="landing-subtitle">
-                        Powered by time, weather, events, and creative agents working together.
-                    </div>
-                </div>
-                <div class="mascot-stage">
-                    <div class="bubble bubble-1">Plan a day in {landing_location}<span>Itinerary + weather</span></div>
-                    <div class="bubble bubble-2">Find events tonight<span>Live + free options</span></div>
-                    <div class="bubble bubble-3">Design a poster<span>Creative direction</span></div>
-                    <div class="bubble bubble-4">Recommend cafes<span>Vibe + budget</span></div>
-                    <div class="bubble bubble-5">Summarize news<span>Smart highlights</span></div>
-                    <div class="bubble bubble-6">Create an image<span>AI art prompts</span></div>
-                    <div class="mascot-core">
-                        <svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <defs>
-                                <linearGradient id="helm" x1="30" y1="40" x2="230" y2="220" gradientUnits="userSpaceOnUse">
-                                    <stop stop-color="#FFD5EC"/>
-                                    <stop offset="1" stop-color="#B9E1FF"/>
-                                </linearGradient>
-                                <linearGradient id="visor" x1="70" y1="95" x2="190" y2="165" gradientUnits="userSpaceOnUse">
-                                    <stop stop-color="#2E3C4A"/>
-                                    <stop offset="1" stop-color="#101821"/>
-                                </linearGradient>
-                            </defs>
-                            <circle cx="130" cy="140" r="98" fill="url(#helm)"/>
-                            <ellipse cx="130" cy="150" rx="78" ry="62" fill="url(#visor)"/>
-                            <circle cx="100" cy="150" r="10" fill="#FFD1A1"/>
-                            <circle cx="160" cy="150" r="10" fill="#FFD1A1"/>
-                            <circle cx="130" cy="78" r="16" fill="#FFE6A8"/>
-                            <rect x="106" y="173" width="48" height="18" rx="9" fill="#FF8A7A"/>
-                            <path d="M85 110C95 95 115 90 130 90C145 90 165 95 175 110" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
-                            <circle cx="40" cy="145" r="18" fill="#B7C8FF"/>
-                            <circle cx="220" cy="145" r="18" fill="#B7C8FF"/>
-                            <rect x="120" y="20" width="20" height="46" rx="10" fill="#C5F2FF"/>
-                            <circle cx="130" cy="18" r="14" fill="#FFE6A8"/>
-                            <circle cx="130" cy="18" r="6" fill="#FF8A7A"/>
-                        </svg>
-                    </div>
-                </div>
-            </div>
-            <div class="landing-prompt">
-        """,
-        unsafe_allow_html=True,
-    )
-
+    st.info("👈 Configure API keys and initialize the assistant in the sidebar to begin.")
     st.text_input(
         "Ask me anything",
-        placeholder="Ask me to plan, search, recommend, or create...",
+        placeholder=f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}.",
         label_visibility="collapsed",
         key="landing_prompt",
     )
-
-    st.markdown(
-        """
-            </div>
-            <div class="landing-chips">
-                <div class="landing-chip">"What should I do this weekend?"</div>
-                <div class="landing-chip">"Find free events near me."</div>
-                <div class="landing-chip">"Generate a creative moodboard."</div>
-                <div class="landing-chip">"What's the weather tomorrow?"</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.info("👈 Configure API keys and initialize the assistant in the sidebar to begin.")
 else:
     intent_labels = {
         "SECURITY_BLOCKED": "Security Agent",
@@ -967,7 +1075,9 @@ else:
             _render_response(message["content"])
     
     # Chat input
-    if prompt := st.chat_input("Ask me anything..."):
+    if prompt := st.chat_input(
+        f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}."
+    ):
         # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -1166,4 +1276,4 @@ else:
 
 # Footer
 st.divider()
-st.caption("Built with Streamlit • Multi-Agent AI System • Created by Jerry Chan")
+st.caption("© 2026 Jerry Chan. All rights reserved. Built with OpenAI Codex • Powered by Streamlit • Hosted on Google Cloud.")
