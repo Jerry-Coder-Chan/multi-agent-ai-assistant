@@ -4,6 +4,7 @@ import sqlite3
 import json
 import hashlib
 import base64
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 import streamlit.components.v1 as components
 from openai import OpenAI
@@ -144,6 +145,12 @@ st.markdown("""
     :root {
         --brand-accent: #1f7a8c;
         --brand-accent-strong: #17606f;
+        --landing-glow: rgba(255, 255, 255, 0.6);
+        --landing-ink: #13232f;
+        --landing-cream: #fff3e6;
+        --landing-peach: #ffd6c2;
+        --landing-coral: #ff8a7a;
+        --landing-mint: #c9f7d6;
     }
     .stChatMessage {
         padding: 1rem;
@@ -196,6 +203,139 @@ st.markdown("""
         border-radius: 0.45rem;
         font-weight: 700;
         margin: 0.4rem 0 0.6rem 0;
+    }
+    .landing-wrap {
+        margin: 1.2rem auto 0 auto;
+        padding: 1.5rem 1.8rem 2.2rem 1.8rem;
+        max-width: 1080px;
+        background: rgba(255, 255, 255, 0.86);
+        border-radius: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.55);
+        box-shadow: 0 18px 60px rgba(21, 25, 36, 0.25);
+        backdrop-filter: blur(12px);
+    }
+    .landing-hero {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr);
+        gap: 1.5rem;
+        align-items: center;
+    }
+    .landing-title {
+        font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+        font-size: clamp(2rem, 3vw, 2.8rem);
+        color: var(--landing-ink);
+        margin-bottom: 0.5rem;
+        letter-spacing: -0.02em;
+    }
+    .landing-subtitle {
+        font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
+        font-size: 1.05rem;
+        line-height: 1.6;
+        color: #2e4a5a;
+        margin-bottom: 1.1rem;
+    }
+    .landing-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.35rem 0.8rem;
+        background: linear-gradient(120deg, var(--landing-mint), var(--landing-cream));
+        border-radius: 999px;
+        font-weight: 600;
+        color: #1b4d3d;
+        font-size: 0.85rem;
+    }
+    .mascot-stage {
+        position: relative;
+        min-height: 360px;
+    }
+    .mascot-core {
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        width: 260px;
+        height: 260px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        filter: drop-shadow(0 25px 40px rgba(21, 30, 44, 0.28));
+        animation: floaty 6s ease-in-out infinite;
+    }
+    .bubble {
+        position: absolute;
+        padding: 0.6rem 0.9rem;
+        border-radius: 18px;
+        background: rgba(17, 29, 40, 0.82);
+        color: #ffffff;
+        font-size: 0.8rem;
+        font-weight: 600;
+        box-shadow: 0 12px 24px rgba(19, 24, 34, 0.25);
+        width: max-content;
+        max-width: 190px;
+    }
+    .bubble span {
+        display: block;
+        font-weight: 400;
+        font-size: 0.72rem;
+        opacity: 0.75;
+        margin-top: 0.2rem;
+    }
+    .bubble-1 { top: 0; left: 10%; transform: translateX(-15%); }
+    .bubble-2 { top: 18%; right: 0; transform: translateX(5%); }
+    .bubble-3 { bottom: 8%; left: -2%; }
+    .bubble-4 { bottom: 18%; right: -4%; }
+    .bubble-5 { top: 40%; left: -6%; }
+    .bubble-6 { top: 45%; right: -6%; }
+    .landing-prompt {
+        margin-top: 1.2rem;
+        text-align: center;
+    }
+    .landing-prompt .stTextInput {
+        max-width: 560px;
+        margin: 0 auto;
+    }
+    .landing-prompt .stTextInput>div>div>input {
+        border-radius: 999px;
+        padding: 0.75rem 1.2rem;
+        border: 1px solid rgba(24, 38, 52, 0.18);
+        background: white;
+        font-size: 0.95rem;
+    }
+    .landing-prompt .stTextInput>div>div>input:focus {
+        border-color: var(--brand-accent);
+        box-shadow: 0 0 0 2px rgba(31, 122, 140, 0.2);
+    }
+    .landing-chips {
+        margin-top: 0.9rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        justify-content: center;
+    }
+    .landing-chip {
+        padding: 0.35rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(25, 40, 54, 0.15);
+        font-size: 0.75rem;
+        color: #2b4555;
+    }
+    @keyframes floaty {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+    }
+    @media (max-width: 980px) {
+        .landing-hero {
+            grid-template-columns: 1fr;
+        }
+        .mascot-stage {
+            min-height: 320px;
+        }
+        .bubble-5, .bubble-6 {
+            display: none;
+        }
     }
     /* Neutralize red defaults for controls */
     .stRadio [role="radiogroup"] > div div[aria-checked="true"]::before {
@@ -674,36 +814,116 @@ else:
 
 # Display initialization status
 if not st.session_state.initialized:
-    st.info("👈 Please configure API keys and initialize the assistant in the sidebar to begin.")
-    
-    # Example queries
-    st.subheader("💡 Example Queries")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        **Event Queries:**
-        - What events are available today?
-        - Show me free events tomorrow
-        - How much does the historical tour cost?
-        
-        **Weather & Recommendations:**
-        - What's the weather tomorrow?
-        - What should I do this weekend?
-        - Recommend indoor activities
-        """)
-    
-    with col2:
-        st.markdown("""
-        **Future Events (2026):**
-        - What concerts are in 2026?
-        - Tell me about F1 Singapore 2026
-        - Any sports events next year?
-        
-        **Image Generation:**
-        - Generate an image of Marina Bay at sunset
-        - Create a futuristic cityscape
-        """)
+    if "landing_location" not in st.session_state:
+        st.session_state.landing_location = "Singapore"
+
+    raw_location = st.text_input(
+        "Location of interest",
+        value=st.session_state.landing_location,
+        help="Updates the background scene in real time.",
+        key="landing_location",
+    )
+    landing_location = raw_location.strip() or "Singapore"
+    if landing_location != raw_location:
+        st.session_state.landing_location = landing_location
+
+    location_query = urllib.parse.quote_plus(f"{landing_location} skyline")
+    background_url = f"https://source.unsplash.com/1600x900/?{location_query}"
+
+    st.markdown(
+        f"""
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
+            .stApp {{
+                background-image:
+                    linear-gradient(180deg, rgba(15, 23, 32, 0.45) 0%, rgba(15, 23, 32, 0.2) 45%, rgba(255, 255, 255, 0.88) 100%),
+                    url('{background_url}');
+                background-size: cover;
+                background-position: center;
+                background-attachment: fixed;
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+        <div class="landing-wrap">
+            <div class="landing-hero">
+                <div>
+                    <div class="landing-badge">🌍 Now viewing {landing_location}</div>
+                    <div class="landing-title">Meet your multi-agent copilots.</div>
+                    <div class="landing-subtitle">
+                        A friendly crew that can plan, search, recommend, and design on demand.
+                        Ask one question, and the right expert agent jumps in instantly.
+                    </div>
+                    <div class="landing-subtitle">
+                        Powered by time, weather, events, and creative agents working together.
+                    </div>
+                </div>
+                <div class="mascot-stage">
+                    <div class="bubble bubble-1">Plan a day in {landing_location}<span>Itinerary + weather</span></div>
+                    <div class="bubble bubble-2">Find events tonight<span>Live + free options</span></div>
+                    <div class="bubble bubble-3">Design a poster<span>Creative direction</span></div>
+                    <div class="bubble bubble-4">Recommend cafes<span>Vibe + budget</span></div>
+                    <div class="bubble bubble-5">Summarize news<span>Smart highlights</span></div>
+                    <div class="bubble bubble-6">Create an image<span>AI art prompts</span></div>
+                    <div class="mascot-core">
+                        <svg width="260" height="260" viewBox="0 0 260 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <defs>
+                                <linearGradient id="helm" x1="30" y1="40" x2="230" y2="220" gradientUnits="userSpaceOnUse">
+                                    <stop stop-color="#FFD5EC"/>
+                                    <stop offset="1" stop-color="#B9E1FF"/>
+                                </linearGradient>
+                                <linearGradient id="visor" x1="70" y1="95" x2="190" y2="165" gradientUnits="userSpaceOnUse">
+                                    <stop stop-color="#2E3C4A"/>
+                                    <stop offset="1" stop-color="#101821"/>
+                                </linearGradient>
+                            </defs>
+                            <circle cx="130" cy="140" r="98" fill="url(#helm)"/>
+                            <ellipse cx="130" cy="150" rx="78" ry="62" fill="url(#visor)"/>
+                            <circle cx="100" cy="150" r="10" fill="#FFD1A1"/>
+                            <circle cx="160" cy="150" r="10" fill="#FFD1A1"/>
+                            <circle cx="130" cy="78" r="16" fill="#FFE6A8"/>
+                            <rect x="106" y="173" width="48" height="18" rx="9" fill="#FF8A7A"/>
+                            <path d="M85 110C95 95 115 90 130 90C145 90 165 95 175 110" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round"/>
+                            <circle cx="40" cy="145" r="18" fill="#B7C8FF"/>
+                            <circle cx="220" cy="145" r="18" fill="#B7C8FF"/>
+                            <rect x="120" y="20" width="20" height="46" rx="10" fill="#C5F2FF"/>
+                            <circle cx="130" cy="18" r="14" fill="#FFE6A8"/>
+                            <circle cx="130" cy="18" r="6" fill="#FF8A7A"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+            <div class="landing-prompt">
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.text_input(
+        "Ask me anything",
+        placeholder="Ask me to plan, search, recommend, or create...",
+        label_visibility="collapsed",
+        key="landing_prompt",
+    )
+
+    st.markdown(
+        """
+            </div>
+            <div class="landing-chips">
+                <div class="landing-chip">"What should I do this weekend?"</div>
+                <div class="landing-chip">"Find free events near me."</div>
+                <div class="landing-chip">"Generate a creative moodboard."</div>
+                <div class="landing-chip">"What's the weather tomorrow?"</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.info("👈 Configure API keys and initialize the assistant in the sidebar to begin.")
 else:
     intent_labels = {
         "SECURITY_BLOCKED": "Security Agent",
