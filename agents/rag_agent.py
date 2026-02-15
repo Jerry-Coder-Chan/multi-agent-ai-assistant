@@ -26,9 +26,18 @@ from typing import Optional
 class RAGAgent:
     """Handles document-based question answering."""
 
-    def __init__(self, api_key: str, pdf_path: str, model: str = "gpt-4"):
+    def __init__(
+        self,
+        api_key: str,
+        pdf_path: str,
+        model: str = "gpt-4",
+        llm_provider: str = "openai",
+        ollama_base_url: str = "",
+    ):
         self.api_key = api_key
         self.model = model
+        self.llm_provider = (llm_provider or "openai").lower()
+        self.ollama_base_url = ollama_base_url.rstrip("/")
         self.vector_store = None
         self.chain = None
 
@@ -57,11 +66,24 @@ class RAGAgent:
 
     def _create_chain(self):
         """Create the RAG chain."""
-        llm = ChatOpenAI(
-            model=self.model,
-            temperature=0,
-            openai_api_key=self.api_key
-        )
+        llm = None
+        if self.llm_provider == "ollama":
+            try:
+                from langchain_community.chat_models import ChatOllama
+                llm = ChatOllama(
+                    model=self.model,
+                    temperature=0,
+                    base_url=self.ollama_base_url or None
+                )
+            except Exception as e:
+                print(f"[RAG] Ollama LLM init failed, falling back to OpenAI: {e}")
+
+        if llm is None:
+            llm = ChatOpenAI(
+                model=self.model,
+                temperature=0,
+                openai_api_key=self.api_key
+            )
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a helpful assistant answering questions about events.

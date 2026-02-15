@@ -24,7 +24,8 @@ class EventAgent:
         event_type: Optional[str] = None,
         min_price: Optional[float] = None,
         max_price: Optional[float] = None,
-        min_capacity: Optional[int] = None
+        min_capacity: Optional[int] = None,
+        indoor: Optional[bool] = None
     ) -> List[Dict]:
         """
         Query events from database with filters.
@@ -35,6 +36,7 @@ class EventAgent:
             min_price: Minimum price filter (optional)
             max_price: Maximum price filter (optional)
             min_capacity: Minimum capacity filter (optional)
+            indoor: Filter by indoor (True) or outdoor (False) (optional)
 
         Returns:
             List of event dictionaries
@@ -60,6 +62,9 @@ class EventAgent:
             if min_capacity is not None:
                 query += " AND capacity >= :min_capacity"
                 params["min_capacity"] = min_capacity
+            if indoor is not None:
+                query += " AND indoor = :indoor"
+                params["indoor"] = 1 if indoor else 0
 
             cursor.execute(query, params)
             rows = cursor.fetchall()

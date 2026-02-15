@@ -723,10 +723,14 @@ with st.sidebar:
     env_weather_key = os.environ.get('WEATHER_API_KEY')
     env_airs_key = os.environ.get('AIRS_API_KEY')
     env_serp_key = os.environ.get('SERPAPI_API_KEY')
+    env_ollama_base_url = os.environ.get('OLLAMA_BASE_URL')
+    env_ollama_model = os.environ.get('OLLAMA_MODEL')
     openai_api_key = env_openai_key
     weather_api_key = env_weather_key
     airs_api_key = env_airs_key
     serpapi_api_key = env_serp_key
+    ollama_base_url = env_ollama_base_url or ""
+    ollama_model = env_ollama_model or "llama3.2"
 
     # API Keys
     st.subheader("API Keys")
@@ -773,7 +777,25 @@ with st.sidebar:
     
     # Settings
     st.subheader("Settings")
-    llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
+    llm_provider = st.selectbox("LLM Provider", ["OpenAI", "Ollama"], index=0)
+    if llm_provider == "OpenAI":
+        llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
+    else:
+        if env_ollama_base_url:
+            st.success("✅ OLLAMA_BASE_URL loaded")
+            ollama_base_url = env_ollama_base_url
+        else:
+            ollama_base_url = st.text_input(
+                "Ollama Base URL",
+                value=ollama_base_url or "http://localhost:11434",
+                help="For GCP internal access, use http://10.148.0.2:11434"
+            )
+        ollama_model = st.text_input(
+            "Ollama Model",
+            value=ollama_model or "llama3.2",
+            help="Example: llama3.1"
+        )
+        llm_model = ollama_model
     max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
 
     # Security Settings (only show if AIRS key provided)
@@ -824,6 +846,8 @@ with st.sidebar:
     if st.button(init_label, type="primary"):
         if not openai_api_key or not weather_api_key:
             st.error("Please provide both API keys!")
+        elif llm_provider == "Ollama" and not ollama_base_url:
+            st.error("Please provide Ollama Base URL.")
         else:
             with st.spinner("Initializing agents..."):
                 try:
@@ -835,8 +859,20 @@ with st.sidebar:
                     pdf_path = os.path.join(data_dir, "Singapore_2026_Major_Events.pdf")
                     
                     event_agent = EventAgent(db_path)
-                    recommendation_agent = RecommendationAgent(openai_api_key)
-                    rag_agent = RAGAgent(openai_api_key, pdf_path, llm_model)
+                    provider_key = "ollama" if llm_provider == "Ollama" else "openai"
+                    recommendation_agent = RecommendationAgent(
+                        openai_api_key,
+                        model=llm_model,
+                        llm_provider=provider_key,
+                        ollama_base_url=ollama_base_url,
+                    )
+                    rag_agent = RAGAgent(
+                        openai_api_key,
+                        pdf_path,
+                        llm_model,
+                        llm_provider=provider_key,
+                        ollama_base_url=ollama_base_url,
+                    )
                     image_agent = ImageAgent(openai_api_key)
                     search_agent = SearchAgent(serpapi_api_key) if serpapi_api_key else None
                     
@@ -871,6 +907,9 @@ with st.sidebar:
                         rag_agent,
                         image_agent,
                         openai_api_key,
+                        llm_provider=provider_key,
+                        llm_model=llm_model,
+                        ollama_base_url=ollama_base_url,
                         security_agent=security_agent,
                         search_agent=search_agent
                     )

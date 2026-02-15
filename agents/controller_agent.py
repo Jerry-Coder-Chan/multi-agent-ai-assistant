@@ -3,10 +3,10 @@ ControllerAgent - Main orchestrator that routes queries to appropriate agents
 Enhanced with Palo Alto Networks Prisma AIRS Runtime Security
 """
 import re
-import openai
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Union, Optional
 from agents.security_agent import SecurityAgent, AIRSResponse
+from agents.llm_client import LLMClient
 
 class ControllerAgent:
     """Main orchestrator that routes queries to appropriate agents with security monitoring."""
@@ -20,6 +20,9 @@ class ControllerAgent:
         rag_agent,
         image_agent,
         openai_api_key: str,
+        llm_provider: str = "openai",
+        llm_model: str = "gpt-4",
+        ollama_base_url: str = "",
         security_agent: Optional[SecurityAgent] = None,
         search_agent=None
     ):
@@ -29,7 +32,12 @@ class ControllerAgent:
         self.recommendation_agent = recommendation_agent
         self.rag_agent = rag_agent
         self.image_agent = image_agent
-        self.llm = openai.OpenAI(api_key=openai_api_key)
+        self.llm = LLMClient(
+            provider=llm_provider,
+            openai_api_key=openai_api_key,
+            ollama_base_url=ollama_base_url,
+        )
+        self.llm_model = llm_model
         self.search_agent = search_agent
         # Default time zone for time queries
         self.last_time_tz = "Asia/Singapore"
@@ -244,17 +252,15 @@ class ControllerAgent:
     Category (one word):"""
 
         try:
-            response = self.llm.chat.completions.create(
-                model="gpt-4",
+            intent = self.llm.chat(
                 messages=[
                     {"role": "system", "content": "Classify intent. Reply with ONE word only."},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": prompt},
                 ],
+                model=self.llm_model,
                 max_tokens=20,
-                temperature=0.0
-            )
-
-            intent = response.choices[0].message.content.strip().upper()
+                temperature=0.0,
+            ).upper()
             valid_intents = ["RECOMMENDATION", "EVENT_QUERY_DB", "RAG_QUERY",
                             "IMAGE_GENERATION", "WEATHER_QUERY", "TIME_QUERY", "UNKNOWN"]
 
@@ -382,16 +388,14 @@ class ControllerAgent:
             5. Use clear punctuation and spacing in full sentences.
             """
 
-            response = self.llm.chat.completions.create(
-                model="gpt-4",
+            text = self.llm.chat(
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": prompt},
                 ],
-                temperature=0.3
+                model=self.llm_model,
+                temperature=0.3,
             )
-            
-            text = response.choices[0].message.content
             text = re.sub(r"asthepriceperpersonis", "as the price per person is", text, flags=re.IGNORECASE)
             # Fix common spacing/punctuation glitches from LLM output
             text = re.sub(r"\.(?=[A-Za-z])", ". ", text)
@@ -657,8 +661,7 @@ class ControllerAgent:
             )
 
         try:
-            response = self.llm.chat.completions.create(
-                model="gpt-4",
+            reply = self.llm.chat(
                 messages=[
                     {
                         "role": "system",
@@ -671,10 +674,10 @@ class ControllerAgent:
                     },
                     {"role": "user", "content": query},
                 ],
+                model=self.llm_model,
                 max_tokens=80,
                 temperature=0.4,
             )
-            reply = response.choices[0].message.content.strip()
             if routed_via_llm:
                 routed_note = "Note: I couldn’t answer from the system’s data, so I routed this to the LLM."
                 if time_sensitive_notice:

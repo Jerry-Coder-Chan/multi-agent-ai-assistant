@@ -13,15 +13,26 @@ Original file is located at
 """
 Recommendation Agent - Generates personalized recommendations using LLM.
 """
-import openai
 from typing import Dict, List
+
+from agents.llm_client import LLMClient
 
 
 class RecommendationAgent:
     """Generates event recommendations based on weather and events."""
 
-    def __init__(self, api_key: str, model: str = "gpt-4"):
-        self.client = openai.OpenAI(api_key=api_key)
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4",
+        llm_provider: str = "openai",
+        ollama_base_url: str = "",
+    ):
+        self.client = LLMClient(
+            provider=llm_provider,
+            openai_api_key=api_key,
+            ollama_base_url=ollama_base_url,
+        )
         self.model = model
 
     def generate_recommendation(
@@ -43,15 +54,14 @@ class RecommendationAgent:
         context = self._build_context(weather_data, events)
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            return self.client.chat(
                 messages=[
                     {"role": "system", "content": self._get_system_prompt()},
-                    {"role": "user", "content": context}
+                    {"role": "user", "content": context},
                 ],
-                temperature=0.7
+                model=self.model,
+                temperature=0.7,
             )
-            return response.choices[0].message.content
         except Exception as e:
             raise Exception(f"Recommendation generation error: {str(e)}")
 

@@ -1,0 +1,70 @@
+import os
+from typing import List, Dict, Optional
+
+import requests
+import openai
+
+
+class LLMClient:
+    """Simple chat client for OpenAI or Ollama."""
+
+    def __init__(
+        self,
+        provider: str,
+        openai_api_key: Optional[str] = None,
+        ollama_base_url: Optional[str] = None,
+        timeout: int = 30,
+    ):
+        self.provider = (provider or "openai").lower()
+        self.timeout = timeout
+        self.ollama_base_url = (ollama_base_url or os.environ.get("OLLAMA_BASE_URL") or "").rstrip("/")
+        self._openai_client = None
+
+        if self.provider == "openai":
+            if not openai_api_key:
+                raise ValueError("OpenAI API key is required for OpenAI provider.")
+            self._openai_client = openai.OpenAI(api_key=openai_api_key)
+        elif self.provider == "ollama":
+            if not self.ollama_base_url:
+                raise ValueError("OLLAMA_BASE_URL is required for Ollama provider.")
+        else:
+            raise ValueError(f"Unknown LLM provider: {self.provider}")
+
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        if self.provider == "openai":
+            response = self._openai_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content.strip()
+
+        payload: Dict[str, object] = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+        }
+        options: Dict[str, object] = {}
+        if temperature is not None:
+            options["temperature"] = temperature
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+        if options:
+            payload["options"] = options
+
+        response = requests.post(
+            f"{self.ollama_base_url}/api/chat",
+            json=payload,
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        message = data.get("message", {})
+        return (message.get("content") or "").strip()
