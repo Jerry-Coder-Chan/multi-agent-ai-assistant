@@ -72,9 +72,19 @@ class ControllerAgent:
             )
             
             # Block if threat detected and blocking is enabled
-            if prompt_scan.threat_detected and self.security_agent.block_on_threat:
+            should_block = False
+            if prompt_scan.threat_detected:
+                should_block = True
+            # Also block if attack mapping indicates a prompt-attack technique
+            if not should_block and getattr(prompt_scan, "attack_mapping", None):
+                should_block = True
+
+            if should_block and self.security_agent.block_on_threat:
                 print(f"[SECURITY] ⚠️ THREAT BLOCKED: {prompt_scan.threat_type}")
-                safe_response = self.security_agent.get_safe_response(prompt_scan.threat_type)
+                safe_response = self.security_agent.get_safe_response(
+                    prompt_scan.threat_type,
+                    attack_mapping=getattr(prompt_scan, "attack_mapping", None)
+                )
                 safe_response += (
                     "\n\nI’m focused on a few specific services right now. Try one of these:\n"
                     "🎯 Recommendations → \"What should I do today?\"\n"
@@ -98,6 +108,7 @@ class ControllerAgent:
                             "risk_score": prompt_scan.risk_score,
                             "action_taken": prompt_scan.action_taken,
                             "details": prompt_scan.details,
+                            "attack_mapping": getattr(prompt_scan, "attack_mapping", None),
                         },
                         "response": {
                             "threat_detected": False,

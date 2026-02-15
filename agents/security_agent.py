@@ -324,10 +324,10 @@ class SecurityAgent:
                 action_taken = "ALLOW"
             
             mapping = self._map_attack(self.last_prompt or "", details)
-            # attach mapping into details for UI
+            # attach mapping into details for UI (no nested "details")
             if isinstance(details, dict):
-                details = {**details, "_attack_mapping": mapping}
-                airs_response = {**airs_response, "details": details}
+                details["_attack_mapping"] = mapping
+                airs_response["details"] = details
 
             return AIRSResponse(
                 is_safe=is_safe,
@@ -349,22 +349,37 @@ class SecurityAgent:
             )
 
     def _load_taxonomy(self) -> List[Dict]:
-        """Load prompt-attack taxonomy from CSV."""
+        """Load prompt-attack taxonomy from CSV, carrying forward Type values."""
         try:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             path = os.path.join(base_dir, "data", "Prompt_Engineering_Attacks.csv")
             rows: List[Dict] = []
+            current_type = None
             with open(path, newline="", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
+                lines = f.read().splitlines()
+                # Find the real header row (some files have leading blank columns/rows)
+                header_idx = None
+                for i, line in enumerate(lines):
+                    if "Type,Category,Definition,Example,Impact" in line:
+                        header_idx = i
+                        break
+                if header_idx is None:
+                    return []
+                data = "\n".join(lines[header_idx:])
+                reader = csv.DictReader(data.splitlines())
                 for row in reader:
-                    if not row.get("Type"):
+                    type_val = (row.get("Type") or "").strip()
+                    category_val = (row.get("Category") or "").strip()
+                    if type_val:
+                        current_type = type_val
+                    if not current_type or not category_val:
                         continue
                     rows.append({
-                        "Type": row.get("Type", "").strip(),
-                        "Category": row.get("Category", "").strip(),
-                        "Definition": row.get("Definition", "").strip(),
-                        "Example": row.get("Example", "").strip(),
-                        "Impact": row.get("Impact", "").strip(),
+                        "Type": current_type,
+                        "Category": category_val,
+                        "Definition": (row.get("Definition") or "").strip(),
+                        "Example": (row.get("Example") or "").strip(),
+                        "Impact": (row.get("Impact") or "").strip(),
                     })
             return rows
         except Exception:
@@ -396,7 +411,7 @@ class SecurityAgent:
                 "reason": reason,
             })
 
-        # Heuristics from prompt text
+        # Heuristics from prompt text (lightweight signatures)
         if re.search(r"(ignore|disregard|neglect).*(instructions|directives)", prompt_l):
             add("prompt injection", "Objective Manipulation", "Heuristic: instruction override")
         if "system prompt" in prompt_l or "initial system prompt" in prompt_l or "developer message" in prompt_l:
@@ -423,6 +438,48 @@ class SecurityAgent:
             add("Social Engineering", "Character Roleplay", "Heuristic: roleplay")
         if "rm -rf" in prompt_l or "runtime.getruntime().exec" in prompt_l or "disable windows defender" in prompt_l:
             add("prompt injection", "Remote Code Execution", "Heuristic: RCE instruction")
+        # Heuristic: adversarial prefix/suffix with noisy tokens before/after benign request
+        if re.search(r"^[^a-z0-9]{5,}.*\b(recommend|help|can you|please)\b", prompt_l):
+            add("prompt injection", "Optimization - Adversarial Suffix/Prefix", "Heuristic: noisy prefix before benign ask")
+        # Heuristic: fuzzing-style prompt with many short phrases and filler
+        if len(re.findall(r"\bplease\b|\bkindly\b|\bcan you\b|\bi need to know\b|\bit is\b", prompt_l)) >= 6:
+            add("prompt injection", "Optimization - Fuzzing", "Heuristic: repeated filler phrases")
+        if "few-shot" in prompt_l or "examples:" in prompt_l:
+            add("prompt injection", "Optimization - Few-Shots (Many-Shots)", "Heuristic: multiple examples")
+        if "autodan" in prompt_l or "developer mode" in prompt_l:
+            add("prompt injection", "Optimization - AutoDAN", "Heuristic: dev mode jailbreak")
+        if "jailbreak" in prompt_l or "bypass safety" in prompt_l:
+            add("prompt injection", "Refusal Suppression", "Heuristic: refusal suppression")
+        if "prefix your reply with" in prompt_l or "start your reply with" in prompt_l:
+            add("prompt injection", "Affirmative Response Prefix", "Heuristic: forced prefix")
+        if "repeat" in prompt_l and re.search(r"(.)\\1{6,}", prompt_l):
+            add("prompt injection", "Repeated Token", "Heuristic: repeated tokens")
+        if re.search(r"\\x1b|\\x7f|ÃÂ", prompt_l):
+            add("prompt injection", "Glitch Tokens", "Heuristic: glitch tokens")
+        if "previous discussions" in prompt_l or "trained on" in prompt_l:
+            add("prompt injection", "Leak Replay", "Heuristic: training data request")
+        if "step by step" in prompt_l and "access code" in prompt_l:
+            add("prompt injection", "Indirect Reference", "Heuristic: indirect reference")
+        if "note:" in prompt_l and "unsafe" in prompt_l:
+            add("prompt injection", "Skeleton Key", "Heuristic: skeleton key pattern")
+        if "act as a judge" in prompt_l and "score" in prompt_l:
+            add("Social Engineering", "Bad Likert Judge", "Heuristic: scoring unsafe content")
+        if "attacker:" in prompt_l or "assistant:" in prompt_l and "repeat" in prompt_l:
+            add("Social Engineering", "Prompt Automatic Iterative Response (PAIR)", "Heuristic: iterative adversarial")
+        if "escalating" in prompt_l or "q1:" in prompt_l and "q2:" in prompt_l:
+            add("Social Engineering", "Crescendo", "Heuristic: escalating prompts")
+        if "story" in prompt_l and "elaborate" in prompt_l:
+            add("Social Engineering", "Deceptive Delight", "Heuristic: multi-turn story")
+        if "persuade" in prompt_l or "best interest" in prompt_l:
+            add("Social Engineering", "Persuasion", "Heuristic: persuasive framing")
+        if "ascii" in prompt_l and "bbbb" in prompt_l:
+            add("Obfuscation", "ASCII Text", "Heuristic: ASCII art")
+        if "reverse" in prompt_l or "flip" in prompt_l:
+            add("Obfuscation", "Flip Text", "Heuristic: flipped text")
+        if "balinese" in prompt_l or "low-resourced" in prompt_l:
+            add("Obfuscation", "Prompts in Low-Resourced Languages", "Heuristic: low-resource language")
+        if re.search(r"[^\x00-\x7f]", prompt_l):
+            add("Obfuscation", "Special Characters", "Heuristic: special characters")
 
         # AIRS flags-based mapping
         prompt_detected = details.get("prompt_detected", {}) if isinstance(details, dict) else {}
@@ -473,7 +530,7 @@ class SecurityAgent:
                 f"Time: {scan_result.scan_time_ms:.2f}ms"
             )
     
-    def get_safe_response(self, threat_type: Optional[str] = None) -> str:
+    def get_safe_response(self, threat_type: Optional[str] = None, attack_mapping: Optional[List[Dict]] = None) -> str:
         """Generate safe response when threat is blocked"""
         
         base_message = (
@@ -481,6 +538,14 @@ class SecurityAgent:
             "our security policies. "
         )
         
+        if attack_mapping:
+            top = attack_mapping[0]
+            attack_msg = (
+                f"Detected: {top.get('type')} / {top.get('category')}. "
+                f"Impact: {top.get('impact')}."
+            )
+            return base_message + attack_msg + " Please rephrase your request or contact support if you believe this is an error."
+
         if threat_type:
             type_messages = {
                 "prompt_injection": "The input appears to contain prompt injection attempts.",
