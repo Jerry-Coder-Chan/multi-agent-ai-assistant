@@ -23,6 +23,8 @@ class ControllerAgent:
         llm_provider: str = "openai",
         llm_model: str = "gpt-4",
         ollama_base_url: str = "",
+        qwen_api_key: str = "",
+        qwen_base_url: str = "",
         security_agent: Optional[SecurityAgent] = None,
         search_agent=None
     ):
@@ -36,6 +38,8 @@ class ControllerAgent:
             provider=llm_provider,
             openai_api_key=openai_api_key,
             ollama_base_url=ollama_base_url,
+            qwen_api_key=qwen_api_key,
+            qwen_base_url=qwen_base_url,
         )
         self.llm_model = llm_model
         self.search_agent = search_agent

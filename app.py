@@ -727,10 +727,15 @@ with st.sidebar:
     env_serp_key = os.environ.get('SERPAPI_API_KEY')
     env_ollama_base_url = os.environ.get('OLLAMA_BASE_URL')
     env_ollama_model = os.environ.get('OLLAMA_MODEL')
+    env_dashscope_key = os.environ.get('DASHSCOPE_API_KEY')
+    env_dashscope_base_url = os.environ.get('DASHSCOPE_BASE_URL')
     openai_api_key = env_openai_key
     weather_api_key = env_weather_key
     airs_api_key = env_airs_key
     serpapi_api_key = env_serp_key
+    dashscope_api_key = env_dashscope_key
+    dashscope_base_url = env_dashscope_base_url or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    qwen_model = "qwen-plus"
     ollama_base_url = env_ollama_base_url or ""
     ollama_model = env_ollama_model or "llama3.2"
 
@@ -780,37 +785,55 @@ with st.sidebar:
     # Settings
     st.subheader("Settings")
     warm_ollama = False
-    llm_provider = st.selectbox("LLM Provider", ["OpenAI", "Ollama"], index=0)
+    llm_provider = st.selectbox("LLM Provider", ["OpenAI", "Ollama", "Qwen"], index=0)
     if llm_provider == "OpenAI":
         llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
     else:
-        if env_ollama_base_url:
-            st.success("✅ OLLAMA_BASE_URL loaded")
-            ollama_base_url = env_ollama_base_url
-        else:
-            ollama_base_url = st.text_input(
-                "Ollama Base URL",
-                value=ollama_base_url or "http://localhost:11434",
-                help="For GCP internal access, use your VM internal IP (e.g., http://10.148.0.3:11434)"
+        if llm_provider == "Ollama":
+            if env_ollama_base_url:
+                st.success("✅ OLLAMA_BASE_URL loaded")
+                ollama_base_url = env_ollama_base_url
+            else:
+                ollama_base_url = st.text_input(
+                    "Ollama Base URL",
+                    value=ollama_base_url or "http://localhost:11434",
+                    help="For GCP internal access, use your VM internal IP (e.g., http://10.148.0.3:11434)"
+                )
+            ollama_model = st.text_input(
+                "Ollama Model",
+                value=ollama_model or "llama3.2",
+                help="Example: llama3.2"
             )
-        ollama_model = st.text_input(
-            "Ollama Model",
-            value=ollama_model or "llama3.2",
-            help="Example: llama3.2"
-        )
-        warm_ollama = st.checkbox(
-            "Warm up Ollama on init",
-            value=True,
-            help="Sends a short prompt during initialization to reduce cold-start latency"
-        )
-        if st.button("Test Ollama connection"):
-            try:
-                resp = requests.get(f"{ollama_base_url.rstrip('/')}/api/tags", timeout=5)
-                resp.raise_for_status()
-                st.success("✅ Ollama reachable")
-            except Exception as e:
-                st.error(f"❌ Ollama test failed: {e}")
-        llm_model = ollama_model
+            warm_ollama = st.checkbox(
+                "Warm up Ollama on init",
+                value=True,
+                help="Sends a short prompt during initialization to reduce cold-start latency"
+            )
+            if st.button("Test Ollama connection"):
+                try:
+                    resp = requests.get(f"{ollama_base_url.rstrip('/')}/api/tags", timeout=5)
+                    resp.raise_for_status()
+                    st.success("✅ Ollama reachable")
+                except Exception as e:
+                    st.error(f"❌ Ollama test failed: {e}")
+            llm_model = ollama_model
+        else:
+            if env_dashscope_key:
+                dashscope_api_key = env_dashscope_key
+                st.success("✅ DASHSCOPE_API_KEY loaded")
+            else:
+                dashscope_api_key = st.text_input("Qwen API Key", type="password", key="dashscope_key")
+            dashscope_base_url = st.text_input(
+                "Qwen Base URL",
+                value=dashscope_base_url,
+                help="Singapore default: https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            )
+            qwen_model = st.text_input(
+                "Qwen Model",
+                value=qwen_model,
+                help="Recommended: qwen-plus"
+            )
+            llm_model = qwen_model
     max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
 
     # Security Settings (only show if AIRS key provided)
@@ -863,6 +886,8 @@ with st.sidebar:
             st.error("Please provide both API keys!")
         elif llm_provider == "Ollama" and not ollama_base_url:
             st.error("Please provide Ollama Base URL.")
+        elif llm_provider == "Qwen" and not dashscope_api_key:
+            st.error("Please provide Qwen API Key.")
         else:
             with st.spinner("Initializing agents..."):
                 try:
@@ -874,13 +899,19 @@ with st.sidebar:
                     pdf_path = os.path.join(data_dir, "Singapore_2026_Major_Events.pdf")
                     
                     event_agent = EventAgent(db_path)
-                    provider_key = "ollama" if llm_provider == "Ollama" else "openai"
+                    provider_key = (
+                        "ollama" if llm_provider == "Ollama"
+                        else "qwen" if llm_provider == "Qwen"
+                        else "openai"
+                    )
                     if provider_key == "ollama" and warm_ollama:
                         try:
                             warm_client = LLMClient(
                                 provider=provider_key,
                                 openai_api_key=openai_api_key,
                                 ollama_base_url=ollama_base_url,
+                                qwen_api_key=dashscope_api_key,
+                                qwen_base_url=dashscope_base_url,
                             )
                             _ = warm_client.chat(
                                 messages=[{"role": "user", "content": "hi"}],
@@ -896,6 +927,8 @@ with st.sidebar:
                         model=llm_model,
                         llm_provider=provider_key,
                         ollama_base_url=ollama_base_url,
+                        qwen_api_key=dashscope_api_key,
+                        qwen_base_url=dashscope_base_url,
                     )
                     rag_agent = RAGAgent(
                         openai_api_key,
@@ -903,6 +936,8 @@ with st.sidebar:
                         llm_model,
                         llm_provider=provider_key,
                         ollama_base_url=ollama_base_url,
+                        qwen_api_key=dashscope_api_key,
+                        qwen_base_url=dashscope_base_url,
                     )
                     image_agent = ImageAgent(openai_api_key)
                     search_agent = SearchAgent(serpapi_api_key) if serpapi_api_key else None
@@ -941,6 +976,8 @@ with st.sidebar:
                         llm_provider=provider_key,
                         llm_model=llm_model,
                         ollama_base_url=ollama_base_url,
+                        qwen_api_key=dashscope_api_key,
+                        qwen_base_url=dashscope_base_url,
                         security_agent=security_agent,
                         search_agent=search_agent
                     )

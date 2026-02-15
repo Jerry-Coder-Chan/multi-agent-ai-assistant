@@ -33,11 +33,15 @@ class RAGAgent:
         model: str = "gpt-4",
         llm_provider: str = "openai",
         ollama_base_url: str = "",
+        qwen_api_key: str = "",
+        qwen_base_url: str = "",
     ):
         self.api_key = api_key
         self.model = model
         self.llm_provider = (llm_provider or "openai").lower()
         self.ollama_base_url = ollama_base_url.rstrip("/")
+        self.qwen_api_key = qwen_api_key
+        self.qwen_base_url = qwen_base_url.rstrip("/")
         self.vector_store = None
         self.chain = None
 
@@ -77,6 +81,16 @@ class RAGAgent:
                 )
             except Exception as e:
                 print(f"[RAG] Ollama LLM init failed, falling back to OpenAI: {e}")
+        elif self.llm_provider == "qwen":
+            try:
+                llm = ChatOpenAI(
+                    model=self.model,
+                    temperature=0,
+                    openai_api_key=self.qwen_api_key,
+                    base_url=self.qwen_base_url
+                )
+            except Exception as e:
+                print(f"[RAG] Qwen LLM init failed, falling back to OpenAI: {e}")
 
         if llm is None:
             llm = ChatOpenAI(

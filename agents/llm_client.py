@@ -13,6 +13,8 @@ class LLMClient:
         provider: str,
         openai_api_key: Optional[str] = None,
         ollama_base_url: Optional[str] = None,
+        qwen_api_key: Optional[str] = None,
+        qwen_base_url: Optional[str] = None,
         timeout: int = 30,
     ):
         self.provider = (provider or "openai").lower()
@@ -25,6 +27,17 @@ class LLMClient:
             if not openai_api_key:
                 raise ValueError("OpenAI API key is required for OpenAI provider.")
             self._openai_client = openai.OpenAI(api_key=openai_api_key)
+        elif self.provider == "qwen":
+            qwen_key = qwen_api_key or os.environ.get("DASHSCOPE_API_KEY")
+            qwen_url = (qwen_base_url or os.environ.get("DASHSCOPE_BASE_URL") or "").rstrip("/")
+            if not qwen_key:
+                raise ValueError("DASHSCOPE_API_KEY is required for Qwen provider.")
+            if not qwen_url:
+                raise ValueError("DASHSCOPE_BASE_URL is required for Qwen provider.")
+            self._openai_client = openai.OpenAI(
+                api_key=qwen_key,
+                base_url=qwen_url
+            )
         elif self.provider == "ollama":
             if not self.ollama_base_url:
                 raise ValueError("OLLAMA_BASE_URL is required for Ollama provider.")
@@ -38,7 +51,7 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        if self.provider == "openai":
+        if self.provider in ("openai", "qwen"):
             response = self._openai_client.chat.completions.create(
                 model=model,
                 messages=messages,
