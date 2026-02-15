@@ -170,6 +170,33 @@ st.markdown("""
         font-style: normal !important;
         font-weight: 400 !important;
     }
+    .attack-chip {
+        display: inline-block;
+        background: #ffe8e8;
+        color: #8b0000;
+        border: 1px solid #f5b5b5;
+        padding: 0.2rem 0.45rem;
+        border-radius: 0.35rem;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin: 0.25rem 0 0.5rem 0;
+    }
+    .attack-panel {
+        border-left: 4px solid #c62828;
+        background: #fff5f5;
+        padding: 0.6rem 0.8rem;
+        border-radius: 0.4rem;
+        margin: 0.4rem 0 0.6rem 0;
+    }
+    .attack-banner {
+        background: #ffe2e2;
+        border: 1px solid #f2a3a3;
+        color: #7a0000;
+        padding: 0.5rem 0.7rem;
+        border-radius: 0.45rem;
+        font-weight: 700;
+        margin: 0.4rem 0 0.6rem 0;
+    }
     /* Neutralize red defaults for controls */
     .stRadio [role="radiogroup"] > div div[aria-checked="true"]::before {
         background-color: var(--brand-accent) !important;
@@ -574,8 +601,10 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Initialization failed: {str(e)}")
 
-    if st.session_state.get("initialized"):
-        st.success("✅ Assistant initialized successfully!")
+    # Avoid duplicate success banners on rerun
+    # (initialization already shows a success message)
+    # if st.session_state.get("initialized"):
+    #     st.success("✅ Assistant initialized successfully!")
     
     # Clear conversation
     if st.button("🗑️ Clear Conversation"):
@@ -771,7 +800,12 @@ else:
                                 if verdict:
                                     mapping = None
                                     try:
-                                        mapping = verdict.get("prompt", {}).get("details", {}).get("_attack_mapping")
+                                        prompt_block = verdict.get("prompt", {})
+                                        mapping = (
+                                            prompt_block.get("attack_mapping")
+                                            or prompt_block.get("details", {}).get("_attack_mapping")
+                                            or prompt_block.get("details", {}).get("details", {}).get("_attack_mapping")
+                                        )
                                     except Exception:
                                         mapping = None
                                     if mapping:
@@ -798,9 +832,23 @@ else:
                         threat_type = result.get("threat_type", "unknown")
                         if intent in ["SECURITY_BLOCKED", "SECURITY_FILTERED"] or security_status == "blocked":
                             event_kind = "Blocked Prompt" if intent == "SECURITY_BLOCKED" else "Filtered Response"
+                            # Prefer mapped attack/category for display
+                            attack_label = None
+                            try:
+                                mapping = result.get("security", {}).get("prompt", {}).get("attack_mapping")
+                                if mapping:
+                                    top = mapping[0]
+                                    attack_label = f"{top.get('type')} / {top.get('category')}"
+                            except Exception:
+                                attack_label = None
+                            if not attack_label:
+                                details = result.get("security", {}).get("prompt", {}).get("details", {})
+                                flags = details.get("prompt_detected", {}) if isinstance(details, dict) else {}
+                                active_flags = [k.replace("_", " ").title() for k, v in flags.items() if v]
+                                attack_label = " / ".join(active_flags) if active_flags else None
                             st.session_state.security_events.append({
                                 "kind": event_kind,
-                                "threat_type": threat_type,
+                                "threat_type": attack_label or threat_type,
                                 "summary": prompt[:120],
                                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             })
@@ -832,6 +880,51 @@ else:
                             'font-weight:bold;margin-bottom:0.4rem;">AIRS BLOCKED</div>',
                             unsafe_allow_html=True
                         )
+                        mapping = None
+                        try:
+                            mapping = result.get("security", {}).get("prompt", {}).get("attack_mapping")
+                        except Exception:
+                            mapping = None
+                        if mapping:
+                            top = mapping[0]
+                            st.markdown(
+                                f'<div class="attack-banner">Detected Attack: {top.get("type")} / {top.get("category")} '
+                                f'— Impact: {top.get("impact")}</div>',
+                                unsafe_allow_html=True
+                            )
+                            st.markdown(
+                                f'<div class="attack-panel">'
+                                f'<strong>Reason:</strong> {top.get("reason")}'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+                        else:
+                            # Fallback to AIRS category/flags if mapping not available
+                            details = None
+                            try:
+                                details = result.get("security", {}).get("prompt", {}).get("details", {})
+                            except Exception:
+                                details = {}
+                            category = details.get("category")
+                            flags = details.get("prompt_detected", {}) if isinstance(details, dict) else {}
+                            flag_labels = {
+                                "agent": "System/Tool Manipulation",
+                                "injection": "Prompt Injection",
+                                "dlp": "Data Exfiltration",
+                                "malicious_code": "Malicious Code",
+                                "topic_violation": "Topic Violation",
+                                "toxic_content": "Toxic Content",
+                                "url_cats": "Suspicious URLs",
+                            }
+                            active_flags = [
+                                flag_labels.get(k, k.replace("_", " ").title())
+                                for k, v in flags.items() if v
+                            ]
+                            label = " / ".join(active_flags) if active_flags else (category.title() if category else "Unclassified")
+                            st.markdown(
+                                f'<div class="attack-banner">Detected Attack: {label} (AIRS flagged)</div>',
+                                unsafe_allow_html=True
+                            )
                     _render_response(response)
 
                     # Voice playback controlled by Assistant Voice toggle
