@@ -16,7 +16,8 @@ class LLMClient:
         timeout: int = 30,
     ):
         self.provider = (provider or "openai").lower()
-        self.timeout = timeout
+        env_timeout = os.environ.get("OLLAMA_TIMEOUT")
+        self.timeout = int(env_timeout) if env_timeout else timeout
         self.ollama_base_url = (ollama_base_url or os.environ.get("OLLAMA_BASE_URL") or "").rstrip("/")
         self._openai_client = None
 

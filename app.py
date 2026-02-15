@@ -7,6 +7,7 @@ import base64
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
+import requests
 import streamlit.components.v1 as components
 from openai import OpenAI
 try:
@@ -23,6 +24,7 @@ from agents.image_agent import ImageAgent
 from agents.controller_agent import ControllerAgent
 from agents.security_agent import SecurityAgent
 from agents.search_agent import SearchAgent
+from agents.llm_client import LLMClient
 
 # ============================================================================
 # DATABASE INITIALIZATION FUNCTION
@@ -777,6 +779,7 @@ with st.sidebar:
     
     # Settings
     st.subheader("Settings")
+    warm_ollama = False
     llm_provider = st.selectbox("LLM Provider", ["OpenAI", "Ollama"], index=0)
     if llm_provider == "OpenAI":
         llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
@@ -788,13 +791,25 @@ with st.sidebar:
             ollama_base_url = st.text_input(
                 "Ollama Base URL",
                 value=ollama_base_url or "http://localhost:11434",
-                help="For GCP internal access, use http://10.148.0.2:11434"
+                help="For GCP internal access, use your VM internal IP (e.g., http://10.148.0.3:11434)"
             )
         ollama_model = st.text_input(
             "Ollama Model",
             value=ollama_model or "llama3.2",
-            help="Example: llama3.1"
+            help="Example: llama3.2"
         )
+        warm_ollama = st.checkbox(
+            "Warm up Ollama on init",
+            value=True,
+            help="Sends a short prompt during initialization to reduce cold-start latency"
+        )
+        if st.button("Test Ollama connection"):
+            try:
+                resp = requests.get(f"{ollama_base_url.rstrip('/')}/api/tags", timeout=5)
+                resp.raise_for_status()
+                st.success("✅ Ollama reachable")
+            except Exception as e:
+                st.error(f"❌ Ollama test failed: {e}")
         llm_model = ollama_model
     max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
 
@@ -860,6 +875,22 @@ with st.sidebar:
                     
                     event_agent = EventAgent(db_path)
                     provider_key = "ollama" if llm_provider == "Ollama" else "openai"
+                    if provider_key == "ollama" and warm_ollama:
+                        try:
+                            warm_client = LLMClient(
+                                provider=provider_key,
+                                openai_api_key=openai_api_key,
+                                ollama_base_url=ollama_base_url,
+                            )
+                            _ = warm_client.chat(
+                                messages=[{"role": "user", "content": "hi"}],
+                                model=llm_model,
+                                max_tokens=5,
+                                temperature=0.0,
+                            )
+                            st.caption("✅ Ollama warmed up")
+                        except Exception as e:
+                            st.warning(f"⚠️ Ollama warm-up failed: {e}")
                     recommendation_agent = RecommendationAgent(
                         openai_api_key,
                         model=llm_model,
