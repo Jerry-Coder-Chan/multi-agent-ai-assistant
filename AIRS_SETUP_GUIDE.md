@@ -40,6 +40,12 @@ your-project/
 OPENAI_API_KEY=your_openai_key_here
 WEATHER_API_KEY=your_weather_key_here
 AIRS_API_KEY=your_airs_api_key_here
+SERPAPI_API_KEY=your_serpapi_key_here
+DASHSCOPE_API_KEY=your_qwen_key_here
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_TIMEOUT=120
 ```
 
 #### Option B: GCP Secret Manager (Production - Recommended)
@@ -76,9 +82,10 @@ gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/multi-agent-ai-assistant
 gcloud run deploy multi-agent-ai-assistant \
     --image gcr.io/YOUR_PROJECT_ID/multi-agent-ai-assistant \
     --platform managed \
-    --region us-central1 \
+    --region asia-southeast1 \
     --allow-unauthenticated \
-    --set-env-vars="OPENAI_API_KEY=${OPENAI_API_KEY},WEATHER_API_KEY=${WEATHER_API_KEY},AIRS_API_KEY=${AIRS_API_KEY}"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ---
@@ -123,7 +130,7 @@ block_on_threat = True   # Block actual threats
 ```bash
 # Get your deployed app URL
 gcloud run services describe multi-agent-ai-assistant \
-    --region us-central1 \
+    --region asia-southeast1 \
     --format="value(status.url)"
 ```
 

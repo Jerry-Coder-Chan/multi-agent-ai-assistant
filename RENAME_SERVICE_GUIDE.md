@@ -32,7 +32,7 @@ gcloud config set project ${GCP_PROJECT_ID}
 
 ```bash
 # Check for secrets
-gcloud secrets list | grep -E "OPENAI_API_KEY|WEATHER_API_KEY|AIRS_API_KEY"
+gcloud secrets list | grep -E "OPENAI_API_KEY|WEATHER_API_KEY|AIRS_API_KEY|SERPAPI_API_KEY|DASHSCOPE_API_KEY"
 ```
 
 **If secrets are missing, create them:**
@@ -49,12 +49,20 @@ echo -n "your_weather_api_key_here" | \
 # Create AIRS secret
 echo -n "your_airs_api_key_here" | \
   gcloud secrets create AIRS_API_KEY --data-file=-
+  
+# Create SerpAPI secret (optional)
+echo -n "your_serpapi_key_here" | \
+  gcloud secrets create SERPAPI_API_KEY --data-file=-
+
+# Create Qwen (DashScope) secret (optional)
+echo -n "your_qwen_api_key_here" | \
+  gcloud secrets create DASHSCOPE_API_KEY --data-file=-
 
 # Grant access to compute service account
 PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
 SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY DASHSCOPE_API_KEY; do
   gcloud secrets add-iam-policy-binding $SECRET \
     --member="serviceAccount:${SERVICE_ACCOUNT}" \
     --role="roles/secretmanager.secretAccessor"
@@ -85,7 +93,8 @@ gcloud run deploy multi-agent-ai-assistant \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ### Step 5: Get New Service URL
@@ -196,7 +205,8 @@ gcloud run deploy ${NEW_SERVICE} \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 
 # Get URL
 NEW_URL=$(gcloud run services describe ${NEW_SERVICE} \

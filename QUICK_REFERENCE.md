@@ -11,8 +11,7 @@ Strata Cloud Manager:
   API Key: AIRS_API_Key
 
 GCP Cloud Run:
-  Current Service: streamlit-ai-demo
-  Target Service: multi-agent-ai-assistant
+  Service: multi-agent-ai-assistant
   Region: asia-southeast1
   
 File Naming:
@@ -38,12 +37,14 @@ gcloud secrets list
 echo -n "your_openai_key" | gcloud secrets create OPENAI_API_KEY --data-file=-
 echo -n "your_weather_key" | gcloud secrets create WEATHER_API_KEY --data-file=-
 echo -n "your_airs_key" | gcloud secrets create AIRS_API_KEY --data-file=-
+echo -n "your_serpapi_key" | gcloud secrets create SERPAPI_API_KEY --data-file=-  # optional
+echo -n "your_qwen_key" | gcloud secrets create DASHSCOPE_API_KEY --data-file=-    # optional
 
 # Grant access
 PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
 SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY DASHSCOPE_API_KEY; do
   gcloud secrets add-iam-policy-binding $SECRET \
     --member="serviceAccount:${SERVICE_ACCOUNT}" \
     --role="roles/secretmanager.secretAccessor"
@@ -64,7 +65,8 @@ gcloud run deploy multi-agent-ai-assistant \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ### 4. Get URL
@@ -158,6 +160,7 @@ gcloud secrets list
 
 # View secret metadata
 gcloud secrets describe AIRS_API_KEY
+gcloud secrets describe DASHSCOPE_API_KEY
 
 # Access secret value (for testing)
 gcloud secrets versions access latest --secret="AIRS_API_KEY"
@@ -268,7 +271,7 @@ curl -X POST \
 ## ⚡ One-Line Deploy
 
 ```bash
-export GCP_PROJECT_ID="your-id" && gcloud builds submit --tag gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant && gcloud run deploy multi-agent-ai-assistant --image gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant --region asia-southeast1 --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+export GCP_PROJECT_ID="your-id" && gcloud builds submit --tag gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant && gcloud run deploy multi-agent-ai-assistant --image gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant --region asia-southeast1 --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ---

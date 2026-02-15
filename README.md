@@ -16,6 +16,9 @@ This project integrates **Palo Alto Networks Prisma AIRS (AI Runtime Security)**
 - ✅ **Data Exfiltration Monitoring** - Tracks attempts to extract sensitive information
 - ✅ **Comprehensive Logging** - All security events logged to Strata Cloud Manager
 - ✅ **Real-time Statistics** - View threat metrics directly in the app
+### LLM Providers Added:
+- ✅ **Ollama** - Local/GCP VM inference via OpenAI-compatible chat API
+- ✅ **Qwen (Alibaba DashScope)** - OpenAI-compatible endpoint with `qwen-plus` default
 
 ---
 
@@ -32,16 +35,15 @@ multi-agent-ai-assistant/
 │   ├── event_agent.py              # Existing agent
 │   ├── recommendation_agent.py     # Existing agent
 │   ├── rag_agent.py                # Existing agent
+│   ├── llm_client.py               # NEW - OpenAI/Ollama/Qwen wrapper
 │   └── image_agent.py              # Existing agent
 ├── data/
 │   ├── events.db                   # SQLite database
 │   └── Singapore_2026_Major_Events.pdf
-├── requirements.txt                # UPDATED - Dependencies
-├── Dockerfile                      # NEW - GCP deployment
-├── deploy_gcp.sh                   # NEW - Deployment script
-├── test_airs_integration.py        # NEW - Test suite
-├── AIRS_SETUP_GUIDE.md             # NEW - Setup instructions
-├── .env.example                    # NEW - Environment template
+├── requirements.txt                # Dependencies
+├── Dockerfile                      # GCP deployment
+├── deploy_new_service.sh           # Deployment script
+├── AIRS_SETUP_GUIDE.md             # Setup instructions
 └── README.md                       # This file
 
 ```
@@ -66,6 +68,12 @@ cp .env.example .env
 OPENAI_API_KEY=your_openai_key
 WEATHER_API_KEY=your_weather_key
 AIRS_API_KEY=your_airs_key  # Optional but recommended
+SERPAPI_API_KEY=your_serpapi_key  # Optional
+DASHSCOPE_API_KEY=your_qwen_key   # Optional (Qwen)
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_TIMEOUT=120
 ```
 
 ### 3. Run Locally
@@ -111,6 +119,23 @@ security_agent = SecurityAgent(
 | Development | ✅ ON       | ✅ ON         | ❌ OFF        |
 | Staging     | ✅ ON       | ✅ ON         | ⚠️ TEST       |
 | Production  | ✅ ON       | ✅ ON         | ✅ ON         |
+
+### LLM Providers
+
+The app supports OpenAI, Ollama (self-hosted), and Qwen (DashScope). Configure via env vars or the sidebar:
+
+```bash
+# Ollama (local or GCP VM)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_TIMEOUT=120
+
+# Qwen (Singapore free-tier default)
+DASHSCOPE_API_KEY=your_qwen_key
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+```
+
+In the UI, choose **LLM Provider** → OpenAI / Ollama / Qwen and set the model name.
 
 ---
 
@@ -172,10 +197,11 @@ gcloud builds submit --tag gcr.io/PROJECT_ID/multi-agent-ai-assistant
 
 # Deploy to Cloud Run
 gcloud run deploy multi-agent-ai-assistant \
-  --image gcr.io/PROJECT_ID/multi-agent-ai-assistant \
-  --platform managed \
-  --region us-central1 \
-  --set-env-vars="OPENAI_API_KEY=...,AIRS_API_KEY=..."
+    --image gcr.io/PROJECT_ID/multi-agent-ai-assistant \
+    --platform managed \
+    --region asia-southeast1 \
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 See [AIRS_SETUP_GUIDE.md](AIRS_SETUP_GUIDE.md) for detailed deployment instructions.

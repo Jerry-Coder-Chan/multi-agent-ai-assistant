@@ -2,10 +2,12 @@
 
 ## 🔐 Storing API Keys in GCP
 
-You have three API keys to manage:
+You have these API keys to manage:
 1. OPENAI_API_KEY
 2. WEATHER_API_KEY
 3. AIRS_API_KEY
+4. SERPAPI_API_KEY (optional)
+5. DASHSCOPE_API_KEY (Qwen, optional)
 
 ---
 
@@ -15,7 +17,7 @@ You have three API keys to manage:
 
 ```bash
 # Set your project ID
-export GCP_PROJECT_ID="streamlit-ai-demo-project"  # Replace with your actual project ID
+export GCP_PROJECT_ID="streamlit-ai-demo"  # Replace with your actual project ID
 gcloud config set project ${GCP_PROJECT_ID}
 
 # Enable Secret Manager API
@@ -42,13 +44,25 @@ echo -n "your_airs_api_key_here" | \
 gcloud secrets create AIRS_API_KEY \
     --data-file=- \
     --replication-policy="automatic"
+
+# Create SerpAPI Key secret (optional)
+echo -n "your_serpapi_key_here" | \
+gcloud secrets create SERPAPI_API_KEY \
+    --data-file=- \
+    --replication-policy="automatic"
+
+# Create Qwen (DashScope) API Key secret (optional)
+echo -n "your_qwen_api_key_here" | \
+gcloud secrets create DASHSCOPE_API_KEY \
+    --data-file=- \
+    --replication-policy="automatic"
 ```
 
 ### Step 3: Grant Cloud Run Access to Secrets
 
 ```bash
 # Get your Cloud Run service account
-export SERVICE_ACCOUNT=$(gcloud run services describe streamlit-ai-demo \
+export SERVICE_ACCOUNT=$(gcloud run services describe multi-agent-ai-assistant \
     --region=asia-southeast1 \
     --format="value(spec.template.spec.serviceAccountName)")
 
@@ -72,22 +86,31 @@ gcloud secrets add-iam-policy-binding WEATHER_API_KEY \
 gcloud secrets add-iam-policy-binding AIRS_API_KEY \
     --member="serviceAccount:${SERVICE_ACCOUNT}" \
     --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding SERPAPI_API_KEY \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding DASHSCOPE_API_KEY \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/secretmanager.secretAccessor"
 ```
 
 ### Step 4: Update Cloud Run to Use Secrets
 
 ```bash
 # Deploy with secrets mounted as environment variables
-gcloud run deploy streamlit-ai-demo \
+gcloud run deploy multi-agent-ai-assistant \
     --region=asia-southeast1 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ### Step 5: Verify Secrets Are Available
 
 ```bash
 # Check Cloud Run configuration
-gcloud run services describe streamlit-ai-demo \
+gcloud run services describe multi-agent-ai-assistant \
     --region=asia-southeast1 \
     --format="yaml(spec.template.spec.containers[0].env)"
 ```
@@ -100,7 +123,7 @@ gcloud run services describe streamlit-ai-demo \
 
 ```bash
 # Deploy with environment variables (NOT RECOMMENDED for production)
-gcloud run deploy streamlit-ai-demo \
+gcloud run deploy multi-agent-ai-assistant \
     --region=asia-southeast1 \
     --set-env-vars="OPENAI_API_KEY=sk-your-key,WEATHER_API_KEY=your-key,AIRS_API_KEY=your-key"
 ```
@@ -122,6 +145,12 @@ cat > .env << EOF
 OPENAI_API_KEY=sk-your-openai-key-here
 WEATHER_API_KEY=your-weather-key-here
 AIRS_API_KEY=your-airs-key-here
+SERPAPI_API_KEY=your-serpapi-key-here
+DASHSCOPE_API_KEY=your-qwen-key-here
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_TIMEOUT=120
 EOF
 
 # Make sure .env is in .gitignore
@@ -144,7 +173,7 @@ gcloud secrets versions add AIRS_API_KEY --data-file=-
 
 # Cloud Run will automatically use latest version
 # Or redeploy to force update
-gcloud run services update streamlit-ai-demo --region=asia-southeast1
+gcloud run services update multi-agent-ai-assistant --region=asia-southeast1
 ```
 
 ### View Secret Metadata (Not the Value)
@@ -178,7 +207,7 @@ gcloud secrets versions access latest --secret="AIRS_API_KEY"
 # Or check logs for environment variables
 
 # View Cloud Run logs
-gcloud run logs read --service=streamlit-ai-demo --region=asia-southeast1 --limit=50
+gcloud run logs read --service=multi-agent-ai-assistant --region=asia-southeast1 --limit=50
 ```
 
 ### Test Locally with Secrets
@@ -213,7 +242,7 @@ EOF
 # Configuration
 export GCP_PROJECT_ID="your-project-id"
 export GCP_REGION="asia-southeast1"
-export SERVICE_NAME="streamlit-ai-demo"
+export SERVICE_NAME="multi-agent-ai-assistant"
 export IMAGE_NAME="gcr.io/${GCP_PROJECT_ID}/${SERVICE_NAME}"
 
 # Set project
@@ -233,7 +262,8 @@ gcloud run deploy ${SERVICE_NAME} \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 
 echo "Deployment complete!"
 
@@ -285,10 +315,10 @@ gcloud secrets add-iam-policy-binding AIRS_API_KEY \
 
 ```bash
 # Force redeploy
-gcloud run services update streamlit-ai-demo \
+gcloud run services update multi-agent-ai-assistant \
     --region=asia-southeast1 \
     --clear-env-vars \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest"
 ```
 
 ### Issue: Secret not found

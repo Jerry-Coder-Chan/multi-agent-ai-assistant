@@ -1,5 +1,5 @@
 # AIRS Integration Setup Checklist
-## For streamlit-ai-demo with Jerry_AI_Demo Profile
+## For multi-agent-ai-assistant with Jerry_AI_Demo Profile
 
 ---
 
@@ -21,7 +21,7 @@
 
 - [ ] Link Security Profile to Application:
   - Go to **AI Security** → **Applications**
-  - Find or create: `streamlit-ai-demo`
+  - Find or create: `multi-agent-ai-assistant`
   - Set:
     - **Security Profile**: `Jerry_AI_Security_Profile`
     - **Deployment Profile**: `Jerry_AI_Demo` ✅ (already set)
@@ -80,12 +80,16 @@ echo -n "your_weather_api_key" | \
 
 echo -n "your_airs_api_key" | \
   gcloud secrets create AIRS_API_KEY --data-file=-
+echo -n "your_serpapi_key" | \
+  gcloud secrets create SERPAPI_API_KEY --data-file=-   # Optional
+echo -n "your_qwen_key" | \
+  gcloud secrets create DASHSCOPE_API_KEY --data-file=- # Optional (Qwen)
 
 # 4. Grant Cloud Run access
 PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
 SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY DASHSCOPE_API_KEY; do
   gcloud secrets add-iam-policy-binding $SECRET \
     --member="serviceAccount:${SERVICE_ACCOUNT}" \
     --role="roles/secretmanager.secretAccessor"
@@ -106,6 +110,12 @@ Create `.env` file:
 OPENAI_API_KEY=sk-your-openai-key
 WEATHER_API_KEY=your-weather-key
 AIRS_API_KEY=your-airs-key
+SERPAPI_API_KEY=your-serpapi-key
+DASHSCOPE_API_KEY=your-qwen-key
+DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+OLLAMA_BASE_URL=http://10.148.0.3:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_TIMEOUT=120
 ```
 
 **Checklist:**
@@ -123,8 +133,8 @@ AIRS_API_KEY=your-airs-key
 export GCP_PROJECT_ID="your-actual-project-id"
 
 # 2. Run deployment script
-chmod +x deploy_streamlit_ai_demo.sh
-./deploy_streamlit_ai_demo.sh
+chmod +x deploy_new_service.sh
+./deploy_new_service.sh
 
 # 3. Choose secret method when prompted:
 #    1 = Secret Manager (recommended)
@@ -141,13 +151,14 @@ chmod +x deploy_streamlit_ai_demo.sh
 
 ```bash
 # Build image
-gcloud builds submit --tag gcr.io/${GCP_PROJECT_ID}/streamlit-ai-demo
+gcloud builds submit --tag gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant
 
 # Deploy with secrets
-gcloud run deploy streamlit-ai-demo \
-  --image gcr.io/${GCP_PROJECT_ID}/streamlit-ai-demo \
+gcloud run deploy multi-agent-ai-assistant \
+  --image gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant \
   --region asia-southeast1 \
-  --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest"
+  --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
+  --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ---
@@ -157,21 +168,21 @@ gcloud run deploy streamlit-ai-demo \
 ### Get Your App URL:
 
 ```bash
-gcloud run services describe streamlit-ai-demo \
+gcloud run services describe multi-agent-ai-assistant \
   --region asia-southeast1 \
   --format="value(status.url)"
 ```
 
 Your URL should be:
 ```
-https://streamlit-ai-demo-959300415442.asia-southeast1.run.app
+https://multi-agent-ai-assistant-959300415442.asia-southeast1.run.app
 ```
 
 ### Update SCM:
 
 - [ ] Go to **Strata Cloud Manager** → **AI Security** → **Applications**
-- [ ] Find application: `streamlit-ai-demo`
-- [ ] Update **Application URL**: `https://streamlit-ai-demo-...run.app`
+- [ ] Find application: `multi-agent-ai-assistant`
+- [ ] Update **Application URL**: `https://multi-agent-ai-assistant-...run.app`
 - [ ] Verify settings:
   - Security Profile: `Jerry_AI_Security_Profile`
   - Deployment Profile: `Jerry_AI_Demo`
@@ -223,7 +234,7 @@ https://streamlit-ai-demo-959300415442.asia-southeast1.run.app
 ### Verify in SCM:
 
 - [ ] Go to **SCM** → **AI Security** → **Monitoring**
-- [ ] See events from `streamlit-ai-demo`
+  - [ ] See events from `multi-agent-ai-assistant`
 - [ ] Check threat logs
 - [ ] Verify scan timestamps
 
@@ -284,7 +295,7 @@ If something doesn't work, check these in order:
 gcloud secrets list
 
 # Check Cloud Run configuration
-gcloud run services describe streamlit-ai-demo \
+gcloud run services describe multi-agent-ai-assistant \
   --region asia-southeast1 \
   --format="yaml(spec.template.spec)"
 ```
@@ -297,7 +308,7 @@ gcloud run services describe streamlit-ai-demo \
 ```bash
 # View recent logs
 gcloud run logs read \
-  --service=streamlit-ai-demo \
+  --service=multi-agent-ai-assistant \
   --region=asia-southeast1 \
   --limit=100
 ```
@@ -315,7 +326,7 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -H "x-pan-token: YOUR_AIRS_KEY" \
   -d '{
-    "metadata": {"ai_model": "test", "app_name": "streamlit-ai-demo"},
+    "metadata": {"ai_model": "test", "app_name": "multi-agent-ai-assistant"},
     "contents": [{"prompt": "test", "response": "test"}],
     "tr_id": "test123",
     "ai_profile": {"profile_name": "Jerry_AI_Demo"}
@@ -340,13 +351,13 @@ After setup, your configuration should be:
 
 ```yaml
 Application:
-  Name: streamlit-ai-demo
-  URL: https://streamlit-ai-demo-959300415442.asia-southeast1.run.app
+  Name: multi-agent-ai-assistant
+  URL: https://multi-agent-ai-assistant-959300415442.asia-southeast1.run.app
   Platform: GCP Cloud Run
   Region: asia-southeast1
 
 Strata Cloud Manager:
-  Application Name: streamlit-ai-demo
+  Application Name: multi-agent-ai-assistant
   Deployment Profile: Jerry_AI_Demo
   Security Profile: Jerry_AI_Security_Profile
   Framework: GCP Agent Builder
