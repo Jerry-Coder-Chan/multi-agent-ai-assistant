@@ -1,6 +1,8 @@
 
 import re
+import os
 from datetime import timezone, datetime, timedelta # Added datetime and timedelta
+from zoneinfo import ZoneInfo
 
 class ChatAgent:
     """Manages conversational context and memory."""
@@ -38,9 +40,13 @@ class ChatAgent:
                     self.last_active_location = location
                 break
 
-        # Extract date
-        sgt_tz = timezone(timedelta(hours=8))
-        today = datetime.now(sgt_tz)
+        # Extract date in configured app timezone (defaults to Singapore).
+        app_tz = os.environ.get("APP_TIMEZONE", "Asia/Singapore")
+        try:
+            today = datetime.now(ZoneInfo(app_tz))
+        except Exception:
+            sgt_tz = timezone(timedelta(hours=8))
+            today = datetime.now(sgt_tz)
         date = None
 
         date_match = re.search(r'(\d{4}-\d{2}-\d{2})', query)

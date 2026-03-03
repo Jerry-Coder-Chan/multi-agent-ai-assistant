@@ -4,8 +4,10 @@ Enhanced with Palo Alto Networks Prisma AIRS Runtime Security
 """
 import json
 import re
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Union, Optional
+from zoneinfo import ZoneInfo
 from agents.security_agent import SecurityAgent, AIRSResponse
 from agents.llm_client import LLMClient
 
@@ -622,11 +624,49 @@ class ControllerAgent:
         print(f"[EVENT QUERY] Querying for {date}")
 
         try:
+            query_lower = query.lower()
+
+            # Support explicit multi-day prompts like "today and tomorrow".
+            if "today" in query_lower and "tomorrow" in query_lower:
+                app_tz = os.environ.get("APP_TIMEZONE", "Asia/Singapore")
+                try:
+                    base = datetime.now(ZoneInfo(app_tz))
+                except Exception:
+                    base = datetime.now()
+                d_today = base.strftime("%Y-%m-%d")
+                d_tomorrow = (base + timedelta(days=1)).strftime("%Y-%m-%d")
+                events_today = self.event_agent.get_events(d_today)
+                events_tomorrow = self.event_agent.get_events(d_tomorrow)
+                self.last_event_results = events_tomorrow if events_tomorrow else events_today
+                self.last_event_date = d_tomorrow if events_tomorrow else d_today
+                lines = [f"Events on {d_today}:"]
+                if events_today:
+                    for e in events_today:
+                        indoor_text = "Yes" if e.get("indoor") else "No"
+                        lines.append(
+                            f"- {e.get('name')} ({e.get('type')}) at {e.get('location')}, "
+                            f"{e.get('time')}, ${e.get('price')}, Capacity {e.get('capacity')}, Indoor: {indoor_text}"
+                        )
+                else:
+                    lines.append("- No events found.")
+                lines.append("")
+                lines.append(f"Events on {d_tomorrow}:")
+                if events_tomorrow:
+                    for e in events_tomorrow:
+                        indoor_text = "Yes" if e.get("indoor") else "No"
+                        lines.append(
+                            f"- {e.get('name')} ({e.get('type')}) at {e.get('location')}, "
+                            f"{e.get('time')}, ${e.get('price')}, Capacity {e.get('capacity')}, Indoor: {indoor_text}"
+                        )
+                else:
+                    lines.append("- No events found.")
+                return "\n".join(lines)
+
             # Simple keyword filters for the DB query
             filters = {}
-            if 'indoor' in query.lower():
+            if 'indoor' in query_lower:
                 filters['indoor'] = True
-            elif 'outdoor' in query.lower():
+            elif 'outdoor' in query_lower:
                 filters['indoor'] = False
             
             events = self.event_agent.get_events(date, **filters)
@@ -645,7 +685,7 @@ class ControllerAgent:
             self.last_event_date = date
 
             # For broad list-style event questions, return deterministic DB-backed output.
-            ql = query.lower()
+            ql = query_lower
             list_style = any(
                 k in ql for k in [
                     "any event", "any events", "show", "list", "what events",
@@ -714,35 +754,81 @@ class ControllerAgent:
         if not any(k in ql for k in ["how much", "cost", "price", "total"]):
             return None
 
-        candidate_events = events
+        candidate_events = events or []
         candidate_date = date
-        if self.last_event_results:
-            last_names = [str(e.get("name", "")).lower() for e in self.last_event_results]
-            if any(name and name in ql for name in last_names):
-                candidate_events = self.last_event_results
-                candidate_date = self.last_event_date or date
+        fallback_events = self.last_event_results or []
+        fallback_date = self.last_event_date or date
 
-        if not candidate_events:
+        if not candidate_events and not fallback_events:
             return None
 
-        segments = re.split(r"\bthen\b", ql)
+        # Split multi-leg plans: supports "... and 4 persons attending ..." and "... then ..."
+        segments = re.split(r"\s+\b(?:and|then)\b\s+(?=\d+\s*(?:persons?|people|pax)\b)", ql)
+        if len(segments) == 1:
+            segments = re.split(r"\bthen\b", ql)
+
+        def _tokenize(text: str) -> set:
+            words = re.findall(r"[a-z0-9]+", text.lower())
+            stop = {
+                "the", "a", "an", "at", "in", "on", "to", "for", "with", "and", "then",
+                "person", "persons", "people", "pax", "attending", "attend", "going", "go",
+                "session", "event", "my", "wife", "total", "cost", "price",
+            }
+            return {w for w in words if w not in stop}
+
+        def _extract_target_phrase(seg: str) -> str:
+            m = re.search(r"(?:attending|attend|for|to attend|going to|go to)\s+(.+)", seg)
+            phrase = m.group(1) if m else seg
+            phrase = re.split(r"\bwith\b", phrase)[0]
+            phrase = re.split(r"[?!.]", phrase)[0]
+            phrase = phrase.strip(" ,;:")
+            return phrase
+
+        def _match_event(seg: str):
+            phrase = _extract_target_phrase(seg)
+            phrase_tokens = _tokenize(phrase)
+            if not phrase_tokens:
+                return None, None, 0
+
+            best_event = None
+            best_date = None
+            best_score = 0
+
+            def score_dataset(dataset, ds_date):
+                nonlocal best_event, best_date, best_score
+                for ev in dataset:
+                    haystack = f"{ev.get('name', '')} {ev.get('location', '')}"
+                    ev_tokens = _tokenize(haystack)
+                    score = len(phrase_tokens.intersection(ev_tokens))
+                    # Extra confidence if event name appears verbatim in phrase.
+                    ev_name = str(ev.get("name", "")).lower()
+                    if ev_name and ev_name in phrase.lower():
+                        score += 3
+                    if score > best_score:
+                        best_score = score
+                        best_event = ev
+                        best_date = ds_date
+
+            score_dataset(candidate_events, candidate_date)
+            score_dataset(fallback_events, fallback_date)
+            return best_event, best_date, best_score
+
         breakdown = []
         total = 0.0
+        used_date = candidate_date
         for seg in segments:
             seg = seg.strip()
             if not seg:
                 continue
-            matched = None
-            for e in candidate_events:
-                name = str(e.get("name", "")).lower()
-                if name and name in seg:
-                    matched = e
-                    break
-            if not matched:
+            matched, matched_date, score = _match_event(seg)
+            if not matched or score <= 0:
                 continue
 
             attendees = 1
-            if "with my wife" in seg or "with wife" in seg:
+            qty_match = re.search(r"(\d+)\s*(?:persons?|people|pax)\b", seg)
+            if qty_match:
+                attendees = max(1, int(qty_match.group(1)))
+            elif "with my wife" in seg or "with wife" in seg:
                 attendees = 2
             elif re.search(r"\bwith\b.+\band\b.+", seg):
                 attendees = 3
@@ -752,6 +838,7 @@ class ControllerAgent:
             unit_price = float(matched.get("price", 0.0) or 0.0)
             event_cost = unit_price * attendees
             total += event_cost
+            used_date = matched_date or used_date
             breakdown.append(
                 f"- {matched.get('name')}: ${unit_price:.2f} x {attendees} = ${event_cost:.2f}"
             )
@@ -759,7 +846,7 @@ class ControllerAgent:
         if not breakdown:
             return None
 
-        lines = [f"**Cost Summary ({candidate_date})**", ""]
+        lines = [f"**Cost Summary ({used_date})**", ""]
         lines.extend(
             [
                 # Escape currency marker to avoid markdown/math rendering artifacts.

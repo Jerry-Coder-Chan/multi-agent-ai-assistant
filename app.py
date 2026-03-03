@@ -7,6 +7,7 @@ import base64
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 import requests
 import streamlit.components.v1 as components
 from openai import OpenAI
@@ -58,8 +59,15 @@ def initialize_events_database(db_path):
         )
     ''')
     
+    # Use app timezone for date-based seed data consistency across environments.
+    app_tz = os.environ.get("APP_TIMEZONE", "Asia/Singapore")
+    try:
+        now = datetime.now(ZoneInfo(app_tz))
+    except Exception:
+        now = datetime.now()
+
     # Get today's date and tomorrow for realistic testing
-    today = datetime.now()
+    today = now
     tomorrow = today + timedelta(days=1)
     day_after = today + timedelta(days=2)
     
