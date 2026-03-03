@@ -23,6 +23,7 @@ class WeatherAgent:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "http://api.weatherapi.com/v1/forecast.json"
+        self.timezone_url = "http://api.weatherapi.com/v1/timezone.json"
 
     def get_weather(self, location: str, date: str = None) -> Dict:
         """
@@ -62,3 +63,37 @@ class WeatherAgent:
             }
         except requests.exceptions.RequestException as e:
             raise Exception(f"Weather API error: {str(e)}")
+
+    def get_timezone(self, location: str) -> Dict:
+        """
+        Get timezone data for a location using WeatherAPI.
+
+        Args:
+            location: City name or coordinates
+
+        Returns:
+            Dictionary containing timezone information
+        """
+        params = {
+            "key": self.api_key,
+            "q": location,
+        }
+
+        try:
+            response = requests.get(self.timezone_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            loc = data.get("location", {})
+            return {
+                "name": loc.get("name"),
+                "region": loc.get("region"),
+                "country": loc.get("country"),
+                "lat": loc.get("lat"),
+                "lon": loc.get("lon"),
+                "tz_id": loc.get("tz_id"),
+                "localtime": loc.get("localtime"),
+                "localtime_epoch": loc.get("localtime_epoch"),
+            }
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Timezone API error: {str(e)}")

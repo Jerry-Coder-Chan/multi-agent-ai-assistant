@@ -17,7 +17,7 @@ This project integrates **Palo Alto Networks Prisma AIRS (AI Runtime Security)**
 - ✅ **Comprehensive Logging** - All security events logged to Strata Cloud Manager
 - ✅ **Real-time Statistics** - View threat metrics directly in the app
 ### LLM Providers Added:
-- ✅ **Ollama** - Local/GCP VM inference via OpenAI-compatible chat API
+- ✅ **Ollama** - Local inference via OpenAI-compatible chat API
 - ✅ **Qwen (Alibaba DashScope)** - OpenAI-compatible endpoint with `qwen-plus` default
 
 ---
@@ -125,7 +125,7 @@ security_agent = SecurityAgent(
 The app supports OpenAI, Ollama (self-hosted), and Qwen (DashScope). Configure via env vars or the sidebar:
 
 ```bash
-# Ollama (local or GCP VM)
+# Ollama (local)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
 OLLAMA_TIMEOUT=120
@@ -201,7 +201,7 @@ gcloud run deploy multi-agent-ai-assistant \
     --platform managed \
     --region asia-southeast1 \
     --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
-    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
+    --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://localhost:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 See [AIRS_SETUP_GUIDE.md](AIRS_SETUP_GUIDE.md) for detailed deployment instructions.

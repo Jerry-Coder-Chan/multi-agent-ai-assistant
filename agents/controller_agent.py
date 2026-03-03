@@ -2,6 +2,7 @@
 ControllerAgent - Main orchestrator that routes queries to appropriate agents
 Enhanced with Palo Alto Networks Prisma AIRS Runtime Security
 """
+import json
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Union, Optional
@@ -43,6 +44,9 @@ class ControllerAgent:
         )
         self.llm_model = llm_model
         self.search_agent = search_agent
+        self.last_non_unknown_intents = []
+        self.last_event_results = []
+        self.last_event_date = None
         # Default time zone for time queries
         self.last_time_tz = "Asia/Singapore"
         self.last_time_location_name = "Singapore"
@@ -137,10 +141,56 @@ class ControllerAgent:
             if prompt_scan.threat_detected:
                 print(f"[SECURITY] ⚠️ Threat logged: {prompt_scan.threat_type} (not blocking)")
 
+        # Deterministic policy enforcement for sensitive-data exfiltration requests.
+        # This complements AIRS classification with hard guarantees for high-impact cases.
+        if self._is_sensitive_data_request(user_query):
+            print("[POLICY] 🚫 Blocked sensitive-data request")
+            policy_response = (
+                "I can't provide secrets or credentials (API keys, tokens, passwords, or internal config). "
+                "I can help with secure setup steps instead."
+            )
+            result = {
+                "response": policy_response,
+                "intent": "POLICY_BLOCKED",
+                "security_status": "policy_blocked",
+            }
+            if self.security_enabled:
+                result["security_scanned"] = True
+                result["scan_time_ms"] = (prompt_scan.scan_time_ms or 0)
+                result["security"] = {
+                    "prompt": {
+                        "threat_detected": prompt_scan.threat_detected,
+                        "threat_type": prompt_scan.threat_type,
+                        "risk_score": prompt_scan.risk_score,
+                        "action_taken": prompt_scan.action_taken,
+                        "details": prompt_scan.details,
+                    },
+                    "response": {
+                        "threat_detected": False,
+                        "threat_type": None,
+                        "risk_score": None,
+                        "action_taken": "POLICY_BLOCKED",
+                        "details": {"policy": "sensitive_data_exfiltration"},
+                    },
+                }
+            return result
+
         # Continue with normal processing
         location, date = self.chat_agent.extract_entities(user_query)
-        intents = self._classify_intents(user_query, date)
+        llm_parsed = self._extract_query_with_llm(user_query, location, date)
+        if llm_parsed:
+            location = llm_parsed.get("location", location)
+            date = llm_parsed.get("date", date)
+            intents = llm_parsed.get("intents", [])
+            if not intents or intents == ["UNKNOWN"]:
+                intents = self._classify_intents(user_query, date)
+        else:
+            intents = self._classify_intents(user_query, date)
+        intents = self._apply_follow_up_intent_override(user_query, intents)
+        intents = self._normalize_intents_by_query(user_query, intents)
         intent = intents[0] if intents else "UNKNOWN"
+        if intents and not (len(intents) == 1 and intents[0] == "UNKNOWN"):
+            self.last_non_unknown_intents = intents.copy()
 
         print(f"[CONTROLLER] Intent(s): {intents}")
         print(f"[CONTROLLER] Location: {location}")
@@ -161,10 +211,18 @@ class ControllerAgent:
                     intents = ["IMAGE_GENERATION"]
                 else:
                     parts = []
+                    section_titles = {
+                        "TIME_QUERY": "Time Query",
+                        "WEATHER_QUERY": "Weather Query",
+                        "EVENT_QUERY_DB": "Event Query",
+                        "RECOMMENDATION": "Recommendation",
+                        "RAG_QUERY": "Rag Query",
+                        "IMAGE_GENERATION": "Image Generation",
+                    }
                     for it in intents:
                         part = self._handle_intent(it, user_query, location, date, user_id)
-                        title = it.replace("_", " ").title()
-                        parts.append(f"**{title}:**\n{part}")
+                        title = section_titles.get(it, it.replace("_", " ").title())
+                        parts.append(f"{title}:\n{part}")
                     response = "\n\n".join(parts)
 
             # ====================================================================
@@ -228,6 +286,35 @@ class ControllerAgent:
                 "intent": "ERROR"
             }
 
+    def _is_sensitive_data_request(self, query: str) -> bool:
+        """Deterministic guardrail for requests to exfiltrate secrets/credentials."""
+        q = (query or "").lower()
+        action_terms = [
+            "send", "share", "reveal", "show", "leak", "give", "expose", "dump", "print",
+            "return", "provide", "display",
+        ]
+        secret_terms = [
+            "api key", "api keys", "secret", "secrets", "token", "tokens", "password",
+            "passwords", "credential", "credentials", "private key", "access key",
+        ]
+        scope_terms = [
+            "your", "internal", "system", "stored", "env", "environment", "backend",
+            "server", "config", "variables",
+        ]
+        has_action = any(t in q for t in action_terms)
+        has_secret = any(t in q for t in secret_terms)
+        has_scope = any(t in q for t in scope_terms)
+
+        # Require both action + secret markers, with optional scope markers for stronger match.
+        # Also block direct "send me api keys" style without scope terms.
+        if has_action and has_secret:
+            return True
+        if "api key" in q and ("send me" in q or "give me" in q or "show me" in q):
+            return True
+        if has_secret and has_scope and ("where" in q or "what is" in q):
+            return True
+        return False
+
     def _classify_intent(self, query: str, extracted_date: str) -> str:
         """Classify user intent using LLM."""
         prompt = f"""Classify this query into ONE category:
@@ -286,7 +373,11 @@ class ControllerAgent:
         # Keyword-based detection (allow multiple)
         if any(k in q for k in ["generate image", "create image", "create picture", "generate picture", "image of", "create a photo", "generate a photo"]):
             intents.append("IMAGE_GENERATION")
-        if any(k in q for k in ["what time", "what date", "what day", "today", "tomorrow", "yesterday", "date is", "time is"]):
+        if any(k in q for k in [
+            "what time", "what date", "what day", "date is", "time is",
+            "current date", "current time", "date and time",
+            "tomorrow date", "yesterday date"
+        ]):
             intents.append("TIME_QUERY")
         if any(k in q for k in ["weather", "temperature", "forecast", "rain", "humidity", "uv"]):
             intents.append("WEATHER_QUERY")
@@ -306,9 +397,183 @@ class ControllerAgent:
                     deduped.append(it)
             return deduped
 
+        # Follow-up shorthand should inherit prior intent(s)
+        follow_up_location_only = re.search(
+            r'^\s*(?:(?:how|what)\s+about|and)\s+[A-Za-z][A-Za-z\s\-\'\.]*\??\s*$',
+            query,
+            re.IGNORECASE,
+        ) is not None or re.search(
+            r'^\s*[A-Za-z][A-Za-z\s\-\'\.]*\s+instead\??\s*$',
+            query,
+            re.IGNORECASE,
+        ) is not None
+        if follow_up_location_only and self.last_non_unknown_intents:
+            return self.last_non_unknown_intents.copy()
+
         # Fallback to single-intent LLM classification
         single = self._classify_intent(query, extracted_date)
         return [single] if single else []
+
+    def _normalize_intents_by_query(self, query: str, intents: list) -> list:
+        """Post-process intent list to prevent noisy multi-intent routing."""
+        if not intents:
+            return intents
+        q = query.lower()
+        has_event = any(k in q for k in ["event", "events", "show me", "list events", "tickets", "capacity", "price", "how much"])
+        has_time_phrase = any(k in q for k in ["what time", "what date", "what day", "date and time", "current time", "current date", "time is", "date is"])
+        has_recommendation_phrase = any(k in q for k in ["recommend", "suggest", "what should i do", "ideas", "activities"])
+        has_cost_phrase = any(
+            k in q for k in [
+                "how much", "total cost", "cost", "price", "cost in total",
+                "in total", "total price"
+            ]
+        )
+        references_previous_plan = any(
+            k in q for k in [
+                "with my", "with wife", "then", "attend", "go to", "go for",
+                "if i want to", "if i go"
+            ]
+        )
+        cost_only_event_query = has_cost_phrase and not has_recommendation_phrase
+
+        # If user is asking about events and did not ask explicit time/date,
+        # suppress accidental TIME_QUERY from model extraction.
+        if has_event and not has_time_phrase and "TIME_QUERY" in intents:
+            intents = [it for it in intents if it != "TIME_QUERY"]
+            if not intents:
+                intents = ["EVENT_QUERY_DB"]
+
+        # Cost calculations should route to Event Query, including follow-up phrasing.
+        if cost_only_event_query and (has_event or references_previous_plan or "EVENT_QUERY_DB" in self.last_non_unknown_intents):
+            if "EVENT_QUERY_DB" not in intents:
+                intents = ["EVENT_QUERY_DB"] + [it for it in intents if it != "EVENT_QUERY_DB"]
+            if "RECOMMENDATION" in intents:
+                intents = [it for it in intents if it != "RECOMMENDATION"]
+
+        # Broad year/future queries should use RAG instead of SQL date lookup.
+        has_specific_date = re.search(r"\b\d{4}-\d{2}-\d{2}\b", q) is not None
+        has_year_ref = re.search(r"\b20\d{2}\b", q) is not None
+        has_future_ref = any(k in q for k in ["future", "next year", "this year", "history", "key events", "major events"])
+        has_relative_day = any(k in q for k in ["today", "tomorrow", "yesterday", "tonight"])
+        if (has_year_ref or has_future_ref) and not has_specific_date and not has_relative_day:
+            if "RAG_QUERY" not in intents:
+                intents.insert(0, "RAG_QUERY")
+            intents = [it for it in intents if it not in {"EVENT_QUERY_DB", "TIME_QUERY", "WEATHER_QUERY"}]
+
+        return intents
+
+    def _apply_follow_up_intent_override(self, query: str, intents: list) -> list:
+        """Reuse prior intent(s) for short follow-up prompts like 'how about tomorrow?'."""
+        q = query.lower().strip()
+        has_explicit_intent_terms = any(
+            k in q for k in [
+                "weather", "temperature", "forecast", "rain", "humidity", "uv",
+                "what time", "what date", "what day", "date and time", "current time", "current date",
+                "recommend", "suggest", "what should i do", "ideas", "activities",
+                "event", "events", "show me", "list",
+                "generate image", "create image", "image of",
+            ]
+        )
+        is_follow_up_short = (
+            re.search(r'^\s*(?:(?:how|what)\s+about|and)\s+[A-Za-z][A-Za-z\s\-\'\.]*\??\s*$', query, re.IGNORECASE) is not None
+            or re.search(r'^\s*[A-Za-z][A-Za-z\s\-\'\.]*\s+instead\??\s*$', query, re.IGNORECASE) is not None
+        )
+        if is_follow_up_short and not has_explicit_intent_terms and self.last_non_unknown_intents:
+            return self.last_non_unknown_intents.copy()
+        return intents
+
+    def _extract_query_with_llm(self, query: str, default_location: str, default_date: str) -> Optional[dict]:
+        """Use LLM to extract intents/location/date as strict JSON with validation."""
+        valid_intents = {
+            "RECOMMENDATION",
+            "EVENT_QUERY_DB",
+            "RAG_QUERY",
+            "IMAGE_GENERATION",
+            "WEATHER_QUERY",
+            "TIME_QUERY",
+            "UNKNOWN",
+        }
+        schema_hint = (
+            '{'
+            '"intents":["TIME_QUERY","WEATHER_QUERY"],'
+            '"location":"Bangkok",'
+            '"date":"2026-03-04"'
+            '}'
+        )
+        prompt = (
+            "Extract the user's intents and entities.\n"
+            "Return JSON only (no markdown, no prose).\n"
+            "Use this schema exactly:\n"
+            f"{schema_hint}\n"
+            "Rules:\n"
+            "- intents: array from [RECOMMENDATION, EVENT_QUERY_DB, RAG_QUERY, IMAGE_GENERATION, WEATHER_QUERY, TIME_QUERY, UNKNOWN]\n"
+            "- location: city/country/place string if present; else empty string\n"
+            "- date: YYYY-MM-DD only when user gives exact date or relative day (today/tomorrow/yesterday/tonight); otherwise empty string\n"
+            "- If query asks both time and weather, return both intents.\n"
+            f"Today date is {default_date}.\n"
+            f'Query: "{query}"'
+        )
+        try:
+            raw = self.llm.chat(
+                messages=[
+                    {"role": "system", "content": "You are an information extraction engine. Output valid JSON only."},
+                    {"role": "user", "content": prompt},
+                ],
+                model=self.llm_model,
+                max_tokens=220,
+                temperature=0.0,
+            ).strip()
+        except Exception as e:
+            print(f"[WARN] LLM extraction failed: {e}")
+            return None
+
+        data = None
+        try:
+            data = json.loads(raw)
+        except Exception:
+            match = re.search(r"\{[\s\S]*\}", raw)
+            if match:
+                try:
+                    data = json.loads(match.group(0))
+                except Exception:
+                    data = None
+        if not isinstance(data, dict):
+            return None
+
+        parsed_intents = data.get("intents", [])
+        if isinstance(parsed_intents, str):
+            parsed_intents = [parsed_intents]
+        if not isinstance(parsed_intents, list):
+            parsed_intents = []
+
+        intents = []
+        for it in parsed_intents:
+            if not isinstance(it, str):
+                continue
+            norm = it.strip().upper()
+            if norm in valid_intents and norm not in intents:
+                intents.append(norm)
+
+        location = data.get("location", "")
+        if not isinstance(location, str):
+            location = ""
+        location = re.sub(r"\s+", " ", location).strip(" ,;:")
+        if len(location) < 2:
+            location = default_location
+
+        date = data.get("date", "")
+        if not isinstance(date, str):
+            date = ""
+        date = date.strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            date = default_date
+
+        if not intents and location == default_location and date == default_date:
+            return None
+
+        order = ["TIME_QUERY", "WEATHER_QUERY", "EVENT_QUERY_DB", "RECOMMENDATION", "RAG_QUERY", "IMAGE_GENERATION", "UNKNOWN"]
+        intents = [it for it in order if it in intents]
+        return {"intents": intents, "location": location, "date": date}
 
     def _handle_intent(self, intent: str, user_query: str, location: str, date: str, user_id: str) -> str:
         """Dispatch a single intent to its handler."""
@@ -323,7 +588,7 @@ class ControllerAgent:
         if intent == "WEATHER_QUERY":
             return self._handle_weather_query(location, date, user_id)
         if intent == "TIME_QUERY":
-            return self._handle_time_query(user_query, user_id)
+            return self._handle_time_query(user_query, user_id, location)
         return self._handle_unknown(user_query, routed_via_llm=True)
 
     def _handle_recommendation(self, location: str, date: str, user_id: str = "anonymous") -> str:
@@ -370,6 +635,34 @@ class ControllerAgent:
             if not events:
                 return f"I couldn't find any events scheduled for {date}."
 
+            # If this is a follow-up cost question, prefer last shown event context.
+            cost_answer = self._calculate_cost_from_query(query, events, date)
+            if cost_answer:
+                return cost_answer
+
+            # Store event context for subsequent follow-up questions.
+            self.last_event_results = events
+            self.last_event_date = date
+
+            # For broad list-style event questions, return deterministic DB-backed output.
+            ql = query.lower()
+            list_style = any(
+                k in ql for k in [
+                    "any event", "any events", "show", "list", "what events",
+                    "events today", "event today"
+                ]
+            )
+            if list_style:
+                lines = [f"Events on {date}:"]
+                for e in events:
+                    indoor_text = "Yes" if e.get("indoor") else "No"
+                    lines.append(
+                        f"- {e.get('name')} ({e.get('type')}) at {e.get('location')}, "
+                        f"{e.get('time')}, ${e.get('price')}, Capacity {e.get('capacity')}, "
+                        f"Indoor: {indoor_text}"
+                    )
+                return "\n".join(lines)
+
             # Create context for LLM
             event_list_str = "\n".join([ 
                 f"- {e['name']} ({e['type']}): Located at {e['location']}. Price: ${e['price']}. Capacity: {e['capacity']}. Indoor: {e['indoor']}."
@@ -406,11 +699,77 @@ class ControllerAgent:
             text = re.sub(r",(?!\s)", ", ", text)
             text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
             text = re.sub(r"(?<=[0-9])(?=[A-Za-z])", " ", text)
+            # Prevent markdown code/header artifacts from changing visual style.
+            text = text.replace("`", "")
+            text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
             text = re.sub(r"\s{2,}", " ", text).strip()
             return text
 
         except Exception as e:
             return f"Error processing event query: {str(e)}"
+
+    def _calculate_cost_from_query(self, query: str, events: list, date: str) -> Optional[str]:
+        """Compute total cost deterministically from follow-up event plan questions."""
+        ql = query.lower()
+        if not any(k in ql for k in ["how much", "cost", "price", "total"]):
+            return None
+
+        candidate_events = events
+        candidate_date = date
+        if self.last_event_results:
+            last_names = [str(e.get("name", "")).lower() for e in self.last_event_results]
+            if any(name and name in ql for name in last_names):
+                candidate_events = self.last_event_results
+                candidate_date = self.last_event_date or date
+
+        if not candidate_events:
+            return None
+
+        segments = re.split(r"\bthen\b", ql)
+        breakdown = []
+        total = 0.0
+        for seg in segments:
+            seg = seg.strip()
+            if not seg:
+                continue
+            matched = None
+            for e in candidate_events:
+                name = str(e.get("name", "")).lower()
+                if name and name in seg:
+                    matched = e
+                    break
+            if not matched:
+                continue
+
+            attendees = 1
+            if "with my wife" in seg or "with wife" in seg:
+                attendees = 2
+            elif re.search(r"\bwith\b.+\band\b.+", seg):
+                attendees = 3
+            elif "with " in seg:
+                attendees = 2
+
+            unit_price = float(matched.get("price", 0.0) or 0.0)
+            event_cost = unit_price * attendees
+            total += event_cost
+            breakdown.append(
+                f"- {matched.get('name')}: ${unit_price:.2f} x {attendees} = ${event_cost:.2f}"
+            )
+
+        if not breakdown:
+            return None
+
+        lines = [f"**Cost Summary ({candidate_date})**", ""]
+        lines.extend(
+            [
+                # Escape currency marker to avoid markdown/math rendering artifacts.
+                line.replace("$", r"\$")
+                for line in breakdown
+            ]
+        )
+        lines.append("")
+        lines.append(f"**Total: \\${total:.2f}**")
+        return "\n".join(lines)
 
     def _handle_rag_query(self, query: str, user_id: str = "anonymous") -> str:
         """Handle RAG-based queries."""
@@ -540,41 +899,71 @@ class ControllerAgent:
         except Exception as e:
             return f"Error fetching weather for {location}: {str(e)}"
 
-    def _handle_time_query(self, query: str, user_id: str = "anonymous") -> str:
+    def _handle_time_query(self, query: str, user_id: str = "anonymous", location: str = None) -> str:
         """Handle time and date queries with human-readable responses, including timezone support."""
         print(f"[TIME QUERY] Getting current time/date")
         
         from zoneinfo import ZoneInfo
         
-        # City to timezone mapping
-        timezone_map = {
-            'london': 'Europe/London',
-            'new york': 'America/New_York',
-            'tokyo': 'Asia/Tokyo',
-            'singapore': 'Asia/Singapore',
-            'paris': 'Europe/Paris',
-            'sydney': 'Australia/Sydney',
-            'dubai': 'Asia/Dubai',
-            'hong kong': 'Asia/Hong_Kong',
-            'los angeles': 'America/Los_Angeles',
-            'chicago': 'America/Chicago',
-            'toronto': 'America/Toronto',
-            'mumbai': 'Asia/Kolkata',
-            'beijing': 'Asia/Shanghai',
-            'berlin': 'Europe/Berlin',
-            'moscow': 'Europe/Moscow',
-        }
-        
-        query_lower = query.lower()
-        
-        # Check if a specific location/timezone is mentioned
+        # Resolve timezone via WeatherAPI for all time queries
         target_tz = None
         location_name = None
-        for city, tz in timezone_map.items():
-            if city in query_lower:
-                target_tz = tz
-                location_name = city.title()
-                break
+        location_query = None
+
+        # First choice: location already extracted by chat agent.
+        location_query = (location or "").strip()
+        if not location_query:
+            # Prefer explicit preposition-based location mentions to avoid false captures
+            preposition_match = re.search(
+                r'\b(?:in|at|for|near|of)\b\s+([A-Za-z][A-Za-z\s\-\'\.]+)',
+                query,
+                re.IGNORECASE,
+            )
+            if preposition_match:
+                location_query = preposition_match.group(1).strip()
+            else:
+                fallback_patterns = [
+                    r'([A-Za-z][A-Za-z\s\-\'\.]+)\s+(?:time|date|day)$',
+                    r'(?:what\s+)?(?:time|date|day)\s+(?:is\s+it\s+)?([A-Za-z][A-Za-z\s\-\'\.]+)$',
+                ]
+                for pattern in fallback_patterns:
+                    match = re.search(pattern, query, re.IGNORECASE)
+                    if match:
+                        location_query = match.group(1).strip()
+                        break
+
+        if not location_query:
+            location_query = self.last_time_location_name
+
+        # Clean up trailing punctuation and trailing context
+        if location_query:
+            location_query = re.split(r"[?!.]", location_query)[0]
+            location_query = re.split(
+                r"\b(now|today|tomorrow|yesterday|tonight|weather|how|please)\b",
+                location_query,
+                flags=re.IGNORECASE,
+            )[0]
+            location_query = re.sub(
+                r"\b(time|date|day)\b",
+                "",
+                location_query,
+                flags=re.IGNORECASE,
+            )
+            location_query = location_query.rstrip(" ,;:").strip()
+            location_query = re.sub(r"\s+", " ", location_query)
+            if len(location_query) < 2:
+                location_query = None
+            if not location_query:
+                location_query = None
+
+        if self.weather_agent and location_query:
+            try:
+                tz_data = self.weather_agent.get_timezone(location_query)
+                if tz_data.get("tz_id"):
+                    target_tz = tz_data["tz_id"]
+                    location_name = tz_data.get("name") or location_query
+            except Exception:
+                pass
 
         # Remember last requested time zone (time queries only)
         if target_tz:
@@ -585,64 +974,19 @@ class ControllerAgent:
         if ZoneInfo:
             if target_tz:
                 now = datetime.now(ZoneInfo(target_tz))
-                location_str = f" in {location_name}"
             else:
                 now = datetime.now(ZoneInfo(self.last_time_tz))
-                location_str = f" in {self.last_time_location_name}"
         else:
             now = datetime.now()
-            location_str = " (local time)"
         
-        tomorrow = now + timedelta(days=1)
-        yesterday = now - timedelta(days=1)
-        
-        # Check if asking specifically about tomorrow
-        if "tomorrow" in query_lower:
-            response = f"**Tomorrow's Date{location_str}:**\n\n"
-            response += f"📅 {tomorrow.strftime('%A, %B %d, %Y')}\n"
-            response += f"🌍 Day of Week: {tomorrow.strftime('%A')}\n"
-            if target_tz:
-                response += f"🕐 Timezone: {target_tz}\n"
-            return response
-        
-        # Check if asking specifically about yesterday
-        elif "yesterday" in query_lower:
-            response = f"**Yesterday's Date{location_str}:**\n\n"
-            response += f"📅 {yesterday.strftime('%A, %B %d, %Y')}\n"
-            response += f"🌍 Day of Week: {yesterday.strftime('%A')}\n"
-            if target_tz:
-                response += f"🕐 Timezone: {target_tz}\n"
-            return response
-        
-        # Check if asking only about time
-        elif "time" in query_lower and "date" not in query_lower:
-            response = f"**Current Time{location_str}:**\n\n"
-            response += f"🕐 {now.strftime('%I:%M:%S %p')}\n"
-            response += f"🕐 24-hour format: {now.strftime('%H:%M:%S')}\n"
-            if target_tz:
-                response += f"🌍 Timezone: {target_tz}\n"
-            return response
-        
-        # Check if asking only about date/day
-        elif any(word in query_lower for word in ["date", "day", "today"]) and "time" not in query_lower:
-            response = f"**Today's Date{location_str}:**\n\n"
-            response += f"📅 {now.strftime('%A, %B %d, %Y')}\n"
-            response += f"🌍 Day of Week: {now.strftime('%A')}\n"
-            if target_tz:
-                response += f"🕐 Timezone: {target_tz}\n"
-            return response
-        
-        # Default: show both date and time
-        else:
-            response = f"**Current Date & Time{location_str}:**\n\n"
-            response += f"📅 **Date:** {now.strftime('%A, %B %d, %Y')}\n"
-            response += f"🕐 **Time:** {now.strftime('%I:%M:%S %p')} ({now.strftime('%H:%M:%S')} 24-hour)\n"
-            response += f"🌍 **Day of Week:** {now.strftime('%A')}\n"
-            if target_tz:
-                response += f"🕐 **Timezone:** {target_tz}\n"
-            response += f"\n**Tomorrow will be:**\n"
-            response += f"📅 {tomorrow.strftime('%A, %B %d, %Y')}\n"
-            return response
+        location_display = location_name or self.last_time_location_name
+
+        response = (
+            f"🌍 Location: {location_display} "
+            f"📅 Date: {now.strftime('%A, %B %d, %Y')} "
+            f"🕐 Time: {now.strftime('%I:%M:%S %p')}"
+        )
+        return response
 
     def _handle_unknown(self, query: str, routed_via_llm: bool = False) -> str:
         """Handle unknown intents with a friendly response and guidance."""

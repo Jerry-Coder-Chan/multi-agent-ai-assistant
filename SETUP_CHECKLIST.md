@@ -113,7 +113,7 @@ AIRS_API_KEY=your-airs-key
 SERPAPI_API_KEY=your-serpapi-key
 DASHSCOPE_API_KEY=your-qwen-key
 DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-OLLAMA_BASE_URL=http://10.148.0.3:11434
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2
 OLLAMA_TIMEOUT=120
 ```
@@ -158,7 +158,7 @@ gcloud run deploy multi-agent-ai-assistant \
   --image gcr.io/${GCP_PROJECT_ID}/multi-agent-ai-assistant \
   --region asia-southeast1 \
   --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest" \
-  --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://10.148.0.3:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
+  --set-env-vars="DASHSCOPE_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1,OLLAMA_BASE_URL=http://localhost:11434,OLLAMA_MODEL=llama3.2,OLLAMA_TIMEOUT=120"
 ```
 
 ---

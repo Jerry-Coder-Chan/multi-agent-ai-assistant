@@ -13,15 +13,30 @@ class ChatAgent:
 
     def extract_entities(self, query: str):
         """Extract location and date from query."""
-        # Extract location
-        location_match = re.search(
-            r'(?:in|at|for|near|of)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)',
-            query
-        )
-        location = location_match.group(1) if location_match else self.last_active_location
-
-        if location_match:
-            self.last_active_location = location
+        # Extract location from direct and short follow-up phrasings.
+        location = self.last_active_location
+        location_patterns = [
+            r'\b(?:in|at|for|near|of)\b\s+([A-Za-z][A-Za-z\s\-\'\.]+)',
+            r'(?:how|what)\s+about\s+([A-Za-z][A-Za-z\s\-\'\.]+)',
+            r'\band\b\s+([A-Za-z][A-Za-z\s\-\'\.]+)',
+            r'([A-Za-z][A-Za-z\s\-\'\.]+)\s+instead',
+            r'^([A-Za-z][A-Za-z\s\-\'\.]+)\??$',
+        ]
+        for pattern in location_patterns:
+            location_match = re.search(pattern, query, re.IGNORECASE)
+            if location_match:
+                candidate = location_match.group(1)
+                candidate = re.split(r"[?!.]", candidate)[0]
+                candidate = re.split(
+                    r"\b(now|today|tomorrow|yesterday|tonight|weather|time|date)\b",
+                    candidate,
+                    flags=re.IGNORECASE,
+                )[0]
+                candidate = re.sub(r"\s+", " ", candidate).strip(" ,;:")
+                if len(candidate) >= 2:
+                    location = candidate.title()
+                    self.last_active_location = location
+                break
 
         # Extract date
         sgt_tz = timezone(timedelta(hours=8))

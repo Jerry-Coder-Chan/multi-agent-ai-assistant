@@ -723,8 +723,15 @@ with st.sidebar:
     # Try to load keys from environment variables early for voice audition
     env_openai_key = os.environ.get('OPENAI_API_KEY')
     env_weather_key = os.environ.get('WEATHER_API_KEY')
-    env_airs_key = os.environ.get('AIRS_API_KEY')
-    env_serp_key = os.environ.get('SERPAPI_API_KEY')
+    env_airs_key = (
+        os.environ.get('AIRS_API_KEY')
+        or os.environ.get('AIRS_KEY')
+        or os.environ.get('AIRSAPI_API_KEY')
+    )
+    env_serp_key = (
+        os.environ.get('SERPAPI_API_KEY')
+        or os.environ.get('SERP_API_KEY')
+    )
     env_ollama_base_url = os.environ.get('OLLAMA_BASE_URL')
     env_ollama_model = os.environ.get('OLLAMA_MODEL')
     env_dashscope_key = os.environ.get('DASHSCOPE_API_KEY')
@@ -791,14 +798,12 @@ with st.sidebar:
     else:
         if llm_provider == "Ollama":
             if env_ollama_base_url:
-                st.success("✅ OLLAMA_BASE_URL loaded")
-                ollama_base_url = env_ollama_base_url
-            else:
-                ollama_base_url = st.text_input(
-                    "Ollama Base URL",
-                    value=ollama_base_url or "http://localhost:11434",
-                    help="For GCP internal access, use your VM internal IP (e.g., http://10.148.0.3:11434)"
-                )
+                st.success("✅ OLLAMA_BASE_URL loaded (you can override below)")
+            ollama_base_url = st.text_input(
+                "Ollama Base URL",
+                value=env_ollama_base_url or ollama_base_url or "http://localhost:11434",
+                help="For local Ollama, use http://localhost:11434"
+            )
             ollama_model = st.text_input(
                 "Ollama Model",
                 value=ollama_model or "llama3.2",
@@ -1164,7 +1169,7 @@ else:
         return f"Multiple Agents: {', '.join(labels[:-1])}, and {labels[-1]}"
 
     def _render_response(text: str):
-        st.markdown(f'<div class="assistant-text">{text}</div>', unsafe_allow_html=True)
+        st.markdown(text)
     # Display chat messages
     for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):

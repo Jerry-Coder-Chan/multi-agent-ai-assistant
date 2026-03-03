@@ -416,6 +416,15 @@ class SecurityAgent:
             add("prompt injection", "Objective Manipulation", "Heuristic: instruction override")
         if "system prompt" in prompt_l or "initial system prompt" in prompt_l or "developer message" in prompt_l:
             add("prompt injection", "Prompt Leakage", "Heuristic: system prompt request")
+        if re.search(
+            r"\b(send|share|reveal|show|leak|give)\b.*\b(api[_\s-]?key|secret|token|password|credential|private key)\b",
+            prompt_l,
+        ):
+            add("prompt injection", "Prompt Leakage", "Heuristic: secret/credential exfil request")
+        if re.search(r"\b(api[_\s-]?keys?|secrets?|tokens?|credentials?)\b", prompt_l) and re.search(
+            r"\b(your|internal|system|env|environment|stored|backend)\b", prompt_l
+        ):
+            add("prompt injection", "Leak Replay", "Heuristic: request for internal stored credentials")
         if "system mode" in prompt_l:
             add("prompt injection", "System Mode", "Heuristic: system mode keyword")
         if "base64" in prompt_l or re.search(r"%[0-9a-f]{2}", prompt_l):
