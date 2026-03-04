@@ -17,6 +17,7 @@ class ChatAgent:
         """Extract location and date from query."""
         # Extract location from direct and short follow-up phrasings.
         location = self.last_active_location
+        query_l = query.lower()
         location_patterns = [
             r'\b(?:in|at|for|near|of)\b\s+([A-Za-z][A-Za-z\s\-\'\.]+)',
             r'(?:how|what)\s+about\s+([A-Za-z][A-Za-z\s\-\'\.]+)',
@@ -27,6 +28,15 @@ class ChatAgent:
         for pattern in location_patterns:
             location_match = re.search(pattern, query, re.IGNORECASE)
             if location_match:
+                # Guard: do not treat generic intent-only prompts as locations.
+                if pattern == r'^([A-Za-z][A-Za-z\s\-\'\.]+)\??$' and any(
+                    k in query_l for k in [
+                        "weather", "temperature", "forecast", "rain", "humidity", "uv",
+                        "time", "date", "day", "events", "event", "recommend",
+                        "suggest", "activities",
+                    ]
+                ):
+                    continue
                 candidate = location_match.group(1)
                 candidate = re.split(r"[?!.]", candidate)[0]
                 candidate = re.split(
