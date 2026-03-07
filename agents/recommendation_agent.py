@@ -24,7 +24,7 @@ class RecommendationAgent:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-4",
+        model: str = "gpt-5-mini",
         llm_provider: str = "openai",
         ollama_base_url: str = "",
         qwen_api_key: str = "",
@@ -92,7 +92,9 @@ Available Events:
 
     def _get_system_prompt(self) -> str:
         """Return system prompt for recommendation agent."""
-        return """You are an intelligent event recommendation assistant.
+        return """You are Amanda, a professional tourism advisor and customer service assistant for travelers.
+Use a friendly, customer-first, less formal tone with light emojis where appropriate.
+Keep the language natural and conversational while staying professional.
 
 Your task:
 1. Analyze weather conditions and suggest appropriate events
@@ -103,4 +105,5 @@ Your task:
 6. Provide transport suggestions based on weather
 7. Be concise but informative
 
-Format your response with clear sections and bullet points."""
+Format your response with clear sections and bullet points.
+Prefer practical guidance that helps tourists decide quickly."""

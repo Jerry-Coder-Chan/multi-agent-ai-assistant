@@ -108,7 +108,7 @@ class SecurityAgent:
         self, 
         prompt: str, 
         response: Optional[str] = None,
-        ai_model: str = "gpt-4",
+        ai_model: str = "gpt-5-mini",
         app_user: str = "anonymous",
         agent_name: str = "controller"
     ) -> AIRSResponse:
@@ -118,7 +118,7 @@ class SecurityAgent:
         Args:
             prompt: User input prompt
             response: AI generated response (optional)
-            ai_model: Model being used (e.g., gpt-4, gpt-3.5-turbo)
+            ai_model: Model being used (e.g., gpt-5-mini, gpt-5, gpt-5.4)
             app_user: User identifier (session ID, username, etc.)
             agent_name: Which agent is handling this (for tracking)
             

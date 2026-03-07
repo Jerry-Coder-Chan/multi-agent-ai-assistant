@@ -6,13 +6,23 @@ import json
 import re
 import os
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Union, Optional
+from typing import Dict, Union, Optional, List
 from zoneinfo import ZoneInfo
 from agents.security_agent import SecurityAgent, AIRSResponse
 from agents.llm_client import LLMClient
+from agents.critic_agent import CriticAgent
 
 class ControllerAgent:
     """Main orchestrator that routes queries to appropriate agents with security monitoring."""
+    TOURISM_PERSONA = (
+        "You are Amanda, a professional tourism advisor and customer service assistant "
+        "for travelers. Be warm, courteous, practical, and concise. Use welcoming, "
+        "service-oriented language, and prioritize clarity and actionable guidance."
+    )
+    DEFAULT_STYLE_MEMORY = (
+        "Style memory: Use a less formal conversational tone. "
+        "Use light emojis where appropriate (avoid overuse)."
+    )
 
     def __init__(
         self,
@@ -24,12 +34,13 @@ class ControllerAgent:
         image_agent,
         openai_api_key: str,
         llm_provider: str = "openai",
-        llm_model: str = "gpt-4",
+        llm_model: str = "gpt-5-mini",
         ollama_base_url: str = "",
         qwen_api_key: str = "",
         qwen_base_url: str = "",
         security_agent: Optional[SecurityAgent] = None,
-        search_agent=None
+        search_agent=None,
+        critic_agent: Optional[CriticAgent] = None,
     ):
         self.chat_agent = chat_agent
         self.weather_agent = weather_agent
@@ -46,6 +57,7 @@ class ControllerAgent:
         )
         self.llm_model = llm_model
         self.search_agent = search_agent
+        self.critic_agent = critic_agent
         self.last_non_unknown_intents = []
         self.last_event_results = []
         self.last_event_date = None
@@ -61,6 +73,15 @@ class ControllerAgent:
             print("[SECURITY] AIRS Runtime Security ENABLED")
         else:
             print("[SECURITY] Running without security monitoring")
+
+    def _get_style_memory_prompt(self) -> str:
+        """Get style guidance from chat memory, with a safe default."""
+        getter = getattr(self.chat_agent, "get_style_prompt", None)
+        if callable(getter):
+            style = getter()
+            if isinstance(style, str) and style.strip():
+                return style.strip()
+        return self.DEFAULT_STYLE_MEMORY
 
     def handle_query(self, user_query: str, user_id: str = "anonymous") -> Dict[str, str]:
         """
@@ -84,7 +105,7 @@ class ControllerAgent:
             prompt_scan = self.security_agent.scan_interaction(
                 prompt=user_query,
                 response=None,  # Only scanning prompt at this stage
-                ai_model="gpt-4",
+                ai_model=self.llm_model,
                 app_user=user_id,
                 agent_name="controller_input"
             )
@@ -228,13 +249,20 @@ class ControllerAgent:
                     response = "\n\n".join(parts)
 
             # ====================================================================
+            # CRITIC STEP: Optional cross-LLM review/rewrite before security scan.
+            # Fail-open by design on quota/timeouts/errors.
+            # ====================================================================
+            critic_meta = {"enabled": False, "status": "disabled", "reason": "critic_disabled"}
+            response, critic_meta = self._apply_critic_if_enabled(user_query, response, intents)
+
+            # ====================================================================
             # SECURITY STEP 2: Scan response before returning to user
             # ====================================================================
             if self.security_enabled:
                 response_scan = self.security_agent.scan_interaction(
                     prompt=user_query,
                     response=response,
-                    ai_model="gpt-4",
+                    ai_model=self.llm_model,
                     app_user=user_id,
                     agent_name=f"controller_{intent.lower()}"
                 )
@@ -253,6 +281,7 @@ class ControllerAgent:
                 "response": response,
                     "intent": "MULTI:" + "+".join(intents) if len(intents) > 1 else intent
             }
+            result["critic"] = critic_meta
             
             # Add security info if available
             if self.security_enabled:
@@ -287,6 +316,34 @@ class ControllerAgent:
                 "response": error_msg,
                 "intent": "ERROR"
             }
+
+    def _apply_critic_if_enabled(self, user_query: str, response: str, intents: list):
+        """Run optional critic pass; always fail open to original response."""
+        if not self.critic_agent or not self.critic_agent.is_enabled():
+            return response, {"enabled": False, "status": "disabled", "reason": "critic_disabled"}
+
+        try:
+            history_getter = getattr(self.chat_agent, "get_conversation_history", None)
+            history = history_getter() if callable(history_getter) else []
+            review = self.critic_agent.review_response(
+                user_query=user_query,
+                draft_response=response,
+                intents=intents or [],
+                recent_history=history or [],
+                tourism_persona=self.TOURISM_PERSONA,
+                style_memory=self._get_style_memory_prompt(),
+            )
+            new_response = review.get("response", response) if isinstance(review, dict) else response
+            meta = {
+                "enabled": True,
+                "status": review.get("status", "unknown") if isinstance(review, dict) else "unknown",
+                "reason": review.get("reason", "") if isinstance(review, dict) else "",
+                "provider": getattr(self.critic_agent, "provider", ""),
+                "model": getattr(self.critic_agent, "model", ""),
+            }
+            return new_response or response, meta
+        except Exception as e:
+            return response, {"enabled": True, "status": "skipped_error", "reason": str(e)}
 
     def _is_sensitive_data_request(self, query: str) -> bool:
         """Deterministic guardrail for requests to exfiltrate secrets/credentials."""
@@ -727,7 +784,10 @@ class ControllerAgent:
 
             text = self.llm.chat(
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
+                    {
+                        "role": "system",
+                        "content": f"{self.TOURISM_PERSONA} {self._get_style_memory_prompt()}",
+                    },
                     {"role": "user", "content": prompt},
                 ],
                 model=self.llm_model,
@@ -762,10 +822,7 @@ class ControllerAgent:
         if not candidate_events and not fallback_events:
             return None
 
-        # Split multi-leg plans: supports "... and 4 persons attending ..." and "... then ..."
-        segments = re.split(r"\s+\b(?:and|then)\b\s+(?=\d+\s*(?:persons?|people|pax)\b)", ql)
-        if len(segments) == 1:
-            segments = re.split(r"\bthen\b", ql)
+        llm_clarification_question = ""
 
         def _tokenize(text: str) -> set:
             words = re.findall(r"[a-z0-9]+", text.lower())
@@ -813,27 +870,176 @@ class ControllerAgent:
             score_dataset(fallback_events, fallback_date)
             return best_event, best_date, best_score
 
+        def _strip_json_blob(text: str) -> str:
+            if not text:
+                return ""
+            text = text.strip()
+            if text.startswith("```"):
+                m = re.search(r"\{[\s\S]*\}", text)
+                return m.group(0) if m else text.strip("`")
+            m = re.search(r"\{[\s\S]*\}", text)
+            return m.group(0) if m else text
+
+        def _infer_attendees_from_segment(seg: str) -> int:
+            qty_match = re.search(r"(\d+)\s*(?:persons?|people|pax)\b", seg)
+            if qty_match:
+                # Explicit headcount (e.g. "6 people") is treated as total attendees.
+                return max(1, int(qty_match.group(1)))
+
+            companions = 0
+            # Generic companion pattern: "with 5 colleagues and 3 partners" => +8
+            for num in re.findall(r"\b(?:with|and)\s+(\d+)\s+[a-z][a-z0-9_-]*\b", seg, flags=re.IGNORECASE):
+                companions += max(0, int(num))
+
+            if companions == 0:
+                # Minimal fallback if no explicit quantity is found.
+                if "with " in seg:
+                    companions = 1
+
+            return max(1, 1 + companions)
+
+        def _extract_legs_via_llm() -> List[dict]:
+            nonlocal llm_clarification_question
+            llm = getattr(self, "llm", None)
+            llm_model = getattr(self, "llm_model", None)
+            if not llm or not llm_model:
+                return []
+
+            all_events = []
+            seen_names = set()
+            for ev in candidate_events + fallback_events:
+                name = str(ev.get("name", "")).strip()
+                if name and name.lower() not in seen_names:
+                    seen_names.add(name.lower())
+                    all_events.append(name)
+
+            if not all_events:
+                return []
+
+            system_prompt = (
+                "You extract structured activity plans for cost calculation.\n"
+                "Output STRICT JSON only with this shape:\n"
+                "{\n"
+                '  "legs": [\n'
+                "    {\n"
+                '      "activity_text": "string",\n'
+                '      "attendees_total": 1,\n'
+                '      "confidence": 0.0\n'
+                "    }\n"
+                "  ],\n"
+                '  "needs_clarification": false,\n'
+                '  "clarification_question": ""\n'
+                "}\n"
+                "Rules:\n"
+                "- attendees_total is total people attending that activity, including the user.\n"
+                "- Use one leg per activity mentioned.\n"
+                "- If a count is not inferable, set needs_clarification=true and add a concise question.\n"
+                "- No markdown, no commentary."
+            )
+            user_prompt = (
+                f"User query:\n{query}\n\n"
+                f"Available events:\n- " + "\n- ".join(all_events) + "\n\n"
+                "Extract the plan."
+            )
+
+            try:
+                raw = llm.chat(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    model=llm_model,
+                    temperature=0.0,
+                    max_tokens=260,
+                )
+                blob = _strip_json_blob(raw)
+                data = json.loads(blob)
+                needs_clarification = bool(data.get("needs_clarification"))
+                clarification_question = str(data.get("clarification_question") or "").strip()
+                if needs_clarification and clarification_question:
+                    llm_clarification_question = clarification_question
+                legs = data.get("legs", [])
+                if not isinstance(legs, list):
+                    return []
+
+                normalized = []
+                for leg in legs:
+                    if not isinstance(leg, dict):
+                        continue
+                    event_text = str(
+                        leg.get("activity_text")
+                        or leg.get("event")
+                        or leg.get("event_name")
+                        or leg.get("target")
+                        or ""
+                    ).strip()
+                    if not event_text:
+                        continue
+
+                    attendees_total = leg.get("attendees_total")
+                    if attendees_total is None and leg.get("companions") is not None:
+                        try:
+                            attendees_total = int(leg.get("companions")) + 1
+                        except Exception:
+                            attendees_total = None
+
+                    try:
+                        attendees_total = int(attendees_total)
+                    except Exception:
+                        continue
+
+                    if attendees_total < 1 or attendees_total > 1000:
+                        continue
+
+                    confidence = leg.get("confidence")
+                    try:
+                        confidence = float(confidence) if confidence is not None else 1.0
+                    except Exception:
+                        confidence = 1.0
+                    if confidence < 0.0 or confidence > 1.0:
+                        confidence = 1.0
+
+                    normalized.append(
+                        {
+                            "event_text": event_text.lower(),
+                            "attendees": attendees_total,
+                            "confidence": confidence,
+                        }
+                    )
+                return normalized
+            except Exception:
+                return []
+
+        def _extract_legs_with_fallback() -> List[dict]:
+            llm_legs = _extract_legs_via_llm()
+            if llm_legs:
+                return llm_legs
+            if llm_clarification_question:
+                return []
+
+            # Regex fallback for reliability when LLM extraction is unavailable.
+            segments = re.split(r"\s+\b(?:and|then)\b\s+(?=\d+\s*(?:persons?|people|pax)\b)", ql)
+            if len(segments) == 1:
+                segments = re.split(r"\bthen\b", ql)
+            return [
+                {"event_text": seg.strip(), "attendees": _infer_attendees_from_segment(seg)}
+                for seg in segments
+                if seg.strip()
+            ]
+
+        legs = _extract_legs_with_fallback()
         breakdown = []
         total = 0.0
         used_date = candidate_date
-        for seg in segments:
-            seg = seg.strip()
-            if not seg:
+        for leg in legs:
+            seg_text = leg.get("event_text", "").strip()
+            if not seg_text:
                 continue
-            matched, matched_date, score = _match_event(seg)
+            matched, matched_date, score = _match_event(seg_text)
             if not matched or score <= 0:
                 continue
 
-            attendees = 1
-            qty_match = re.search(r"(\d+)\s*(?:persons?|people|pax)\b", seg)
-            if qty_match:
-                attendees = max(1, int(qty_match.group(1)))
-            elif "with my wife" in seg or "with wife" in seg:
-                attendees = 2
-            elif re.search(r"\bwith\b.+\band\b.+", seg):
-                attendees = 3
-            elif "with " in seg:
-                attendees = 2
+            attendees = max(1, int(leg.get("attendees", 1)))
 
             unit_price = float(matched.get("price", 0.0) or 0.0)
             event_cost = unit_price * attendees
@@ -844,6 +1050,8 @@ class ControllerAgent:
             )
 
         if not breakdown:
+            if llm_clarification_question:
+                return llm_clarification_question
             return None
 
         lines = [f"**Cost Summary ({used_date})**", ""]
@@ -1101,7 +1309,8 @@ class ControllerAgent:
                     {
                         "role": "system",
                         "content": (
-                            "You are a friendly assistant for a multi-agent demo app. "
+                            f"{self.TOURISM_PERSONA} "
+                            f"{self._get_style_memory_prompt()} "
                             "Answer the user briefly and politely in 1-2 sentences. "
                             "If the question is outside the app’s core services, you may still answer "
                             "with general knowledge, but avoid claiming real-time or proprietary data."

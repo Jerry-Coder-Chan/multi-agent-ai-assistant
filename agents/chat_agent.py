@@ -12,6 +12,11 @@ class ChatAgent:
         self.max_history = max_history
         self.last_active_date = None
         self.last_active_location = "Singapore"
+        # Style memory for consistent response tone across turns.
+        self.style_memory = {
+            "tone": "less formal",
+            "emoji_style": "light",
+        }
 
     def extract_entities(self, query: str):
         """Extract location and date from query."""
@@ -100,6 +105,22 @@ class ChatAgent:
         self.last_active_date = None
         self.last_active_location = "Singapore"
         print("Conversation history cleared.")
+
+    def set_style_memory(self, tone: str = "", emoji_style: str = ""):
+        """Update preferred response style memory."""
+        if isinstance(tone, str) and tone.strip():
+            self.style_memory["tone"] = tone.strip()
+        if isinstance(emoji_style, str) and emoji_style.strip():
+            self.style_memory["emoji_style"] = emoji_style.strip()
+
+    def get_style_prompt(self) -> str:
+        """Return style instructions derived from memory."""
+        tone = self.style_memory.get("tone", "less formal")
+        emoji_style = self.style_memory.get("emoji_style", "light")
+        return (
+            f"Style memory: Use a {tone} conversational tone. "
+            f"Use {emoji_style} emojis where appropriate (avoid overuse)."
+        )
 
     def get_context_summary(self):
         """Get summary of current context."""

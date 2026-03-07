@@ -26,6 +26,7 @@ from agents.controller_agent import ControllerAgent
 from agents.security_agent import SecurityAgent
 from agents.search_agent import SearchAgent
 from agents.llm_client import LLMClient
+from agents.critic_agent import CriticAgent
 
 # ============================================================================
 # DATABASE INITIALIZATION FUNCTION
@@ -585,6 +586,7 @@ if 'initialized' not in st.session_state:
     st.session_state.last_spoken_hash = None
     st.session_state.voice_greeted = False
     st.session_state.tts_cache = {}
+    st.session_state.voice_last_enabled = False
 
 def _speak_text(text, rate=1.0, pitch=1.0, volume=1.0, voice_name=""):
     if not text:
@@ -800,9 +802,21 @@ with st.sidebar:
     # Settings
     st.subheader("Settings")
     warm_ollama = False
+    enable_critic = st.checkbox(
+        "Enable Critic LLM",
+        value=True,
+        help="Cross-check response quality with a secondary model; auto-skips on quota/errors."
+    )
     llm_provider = st.selectbox("LLM Provider", ["OpenAI", "Ollama", "Qwen"], index=0)
     if llm_provider == "OpenAI":
-        llm_model = st.selectbox("LLM Model", ["gpt-4", "gpt-3.5-turbo"], index=0)
+        llm_model = st.selectbox("LLM Model", ["gpt-5-mini", "gpt-5", "gpt-5.4"], index=0)
+        if not dashscope_api_key:
+            dashscope_api_key = st.text_input(
+                "Qwen API Key (Optional, Critic)",
+                type="password",
+                key="dashscope_key",
+                help="Used only as cross-LLM critic when primary provider is OpenAI."
+            )
     else:
         if llm_provider == "Ollama":
             if env_ollama_base_url:
@@ -954,6 +968,48 @@ with st.sidebar:
                     )
                     image_agent = ImageAgent(openai_api_key)
                     search_agent = SearchAgent(serpapi_api_key) if serpapi_api_key else None
+                    critic_agent = None
+
+                    # Cross-LLM critic selection:
+                    # - OpenAI primary -> Qwen critic
+                    # - Qwen primary -> OpenAI critic
+                    # - Ollama primary -> OpenAI (fallback Qwen)
+                    if enable_critic:
+                        critic_provider = None
+                        critic_model = None
+                        if provider_key == "openai" and dashscope_api_key:
+                            critic_provider = "qwen"
+                            critic_model = "qwen-plus"
+                        elif provider_key == "qwen" and openai_api_key:
+                            critic_provider = "openai"
+                            critic_model = "gpt-5-mini"
+                        elif provider_key == "ollama":
+                            if openai_api_key:
+                                critic_provider = "openai"
+                                critic_model = "gpt-5-mini"
+                            elif dashscope_api_key:
+                                critic_provider = "qwen"
+                                critic_model = "qwen-plus"
+
+                        if critic_provider and critic_model:
+                            try:
+                                critic_agent = CriticAgent(
+                                    provider=critic_provider,
+                                    model=critic_model,
+                                    openai_api_key=openai_api_key,
+                                    ollama_base_url=ollama_base_url,
+                                    qwen_api_key=dashscope_api_key,
+                                    qwen_base_url=dashscope_base_url,
+                                )
+                                if critic_agent.is_enabled():
+                                    st.caption(f"✅ Critic enabled: {critic_provider} ({critic_model})")
+                                else:
+                                    st.caption("ℹ️ Critic disabled (provider not ready)")
+                            except Exception as e:
+                                st.warning(f"⚠️ Critic initialization failed; continuing without critic: {e}")
+                                critic_agent = None
+                        else:
+                            st.caption("ℹ️ Critic skipped (cross-provider key/model unavailable)")
                     
                     # Initialize SecurityAgent if API key provided and enabled
                     security_agent = None
@@ -992,7 +1048,8 @@ with st.sidebar:
                         qwen_api_key=dashscope_api_key,
                         qwen_base_url=dashscope_base_url,
                         security_agent=security_agent,
-                        search_agent=search_agent
+                        search_agent=search_agent,
+                        critic_agent=critic_agent,
                     )
                     
                     st.session_state.initialized = True
@@ -1015,13 +1072,39 @@ with st.sidebar:
 
     # Voice Output
     st.subheader("Voice Output")
-    voice_enabled = st.checkbox(
-        "Assistant Voice",
-        value=st.session_state.get("voice_enabled", False)
-    )
+    if "voice_enabled" not in st.session_state:
+        st.session_state.voice_enabled = False
+    voice_enabled = st.checkbox("Assistant Voice", key="voice_enabled")
     st.caption("AI-generated voice via OpenAI TTS when a key is available.")
 
-    st.session_state.voice_enabled = voice_enabled
+    # If user toggles voice off, stop any in-flight browser speech/audio immediately.
+    if (
+        st.session_state.get("voice_last_enabled", False)
+        and not st.session_state.get("voice_enabled", False)
+    ):
+        components.html(
+            """
+            <script>
+            (() => {
+                try {
+                    if (window.speechSynthesis) {
+                        window.speechSynthesis.cancel();
+                    }
+                    const audios = document.querySelectorAll("audio");
+                    audios.forEach((a) => {
+                        try {
+                            a.pause();
+                            a.currentTime = 0;
+                        } catch (e) {}
+                    });
+                } catch (e) {}
+            })();
+            </script>
+            """,
+            height=0,
+        )
+    st.session_state.voice_last_enabled = st.session_state.get("voice_enabled", False)
+
     st.session_state.voice_rate = st.session_state.get("voice_rate", 1.0)
     st.session_state.voice_pitch = st.session_state.get("voice_pitch", 1.0)
     st.session_state.voice_volume = st.session_state.get("voice_volume", 1.0)
@@ -1165,16 +1248,28 @@ else:
         "UNKNOWN": "LLM Direct",
     }
 
-    def _format_multi_intent(intent: str) -> str:
+    def _format_multi_intent(intent: str, critic: dict = None) -> str:
+        critic_suffix = ""
+        if isinstance(critic, dict) and critic.get("enabled"):
+            status = str(critic.get("status", "")).lower()
+            provider = str(critic.get("provider", "")).strip()
+            provider_label = provider.title() if provider else "Critic"
+            if status in {"applied", "kept"}:
+                critic_suffix = f" + Critic Agent ({provider_label})"
+            elif status == "skipped_quota":
+                critic_suffix = " + Critic Agent (Skipped: Quota)"
+            else:
+                critic_suffix = " + Critic Agent (Skipped)"
+
         if not intent.startswith("MULTI:"):
-            return intent_labels.get(intent, intent)
+            return f"{intent_labels.get(intent, intent)}{critic_suffix}"
         parts = intent.replace("MULTI:", "").split("+")
         labels = [intent_labels.get(p, p) for p in parts]
         if len(labels) == 1:
-            return labels[0]
+            return f"{labels[0]}{critic_suffix}"
         if len(labels) == 2:
-            return f"Multiple Agents: {labels[0]} and {labels[1]}"
-        return f"Multiple Agents: {', '.join(labels[:-1])}, and {labels[-1]}"
+            return f"Multiple Agents: {labels[0]} and {labels[1]}{critic_suffix}"
+        return f"Multiple Agents: {', '.join(labels[:-1])}, and {labels[-1]}{critic_suffix}"
 
     def _render_response(text: str):
         st.markdown(text)
@@ -1183,7 +1278,7 @@ else:
         with st.chat_message(message["role"]):
             # Display Intent Badge if present
             if "intent" in message:
-                label = _format_multi_intent(message["intent"])
+                label = _format_multi_intent(message["intent"], message.get("critic"))
                 st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
             if message.get("security_badge"):
                 st.markdown(
@@ -1321,7 +1416,7 @@ else:
                         security_badge = False
                     
                     # Display Intent
-                    label = _format_multi_intent(intent)
+                    label = _format_multi_intent(intent, result.get("critic"))
                     st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
                     if security_badge:
                         st.markdown(
@@ -1386,7 +1481,8 @@ else:
                         "role": "assistant", 
                         "content": response,
                         "intent": intent,
-                        "security_badge": security_badge
+                        "security_badge": security_badge,
+                        "critic": result.get("critic"),
                     })
                 except Exception as e:
                     error_msg = f"Error: {str(e)}"

@@ -30,7 +30,7 @@ class RAGAgent:
         self,
         api_key: str,
         pdf_path: str,
-        model: str = "gpt-4",
+        model: str = "gpt-5-mini",
         llm_provider: str = "openai",
         ollama_base_url: str = "",
         qwen_api_key: str = "",
@@ -100,8 +100,10 @@ class RAGAgent:
             )
 
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a helpful assistant answering questions about events.
-Use the provided context to answer accurately. If you don't know, say so."""),
+            ("system", """You are Amanda, a professional tourism advisor and customer service assistant for travelers.
+Use a friendly, less formal, customer-first tone with light emojis where appropriate.
+Use the provided context to answer accurately, clearly, and helpfully for tourists.
+If the answer is not in context, say so directly and avoid making up details."""),
             ("user", "Context: {context}\n\nQuestion: {question}")
         ])
 
