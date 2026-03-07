@@ -21,6 +21,8 @@ class LLMClient:
         env_timeout = os.environ.get("OLLAMA_TIMEOUT")
         self.timeout = int(env_timeout) if env_timeout else timeout
         self.ollama_base_url = (ollama_base_url or os.environ.get("OLLAMA_BASE_URL") or "").rstrip("/")
+        # For GPT-5 family, keep reasoning off by default for lower latency/cost.
+        self.openai_reasoning_effort = os.environ.get("OPENAI_REASONING_EFFORT", "none").strip().lower()
         self._openai_client = None
 
         if self.provider == "openai":
@@ -52,12 +54,32 @@ class LLMClient:
         max_tokens: Optional[int] = None,
     ) -> str:
         if self.provider in ("openai", "qwen"):
-            response = self._openai_client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            payload: Dict[str, object] = {
+                "model": model,
+                "messages": messages,
+            }
+            model_l = (model or "").lower()
+            is_openai_gpt5 = self.provider == "openai" and model_l.startswith("gpt-5")
+
+            if is_openai_gpt5 and self.openai_reasoning_effort:
+                payload["reasoning_effort"] = self.openai_reasoning_effort
+
+            # Some GPT-5 variants may reject temperature/top_p controls in chat completions.
+            # Keep temperature for non-GPT-5 models by default.
+            if temperature is not None and not is_openai_gpt5:
+                payload["temperature"] = temperature
+            if max_tokens is not None:
+                payload["max_tokens"] = max_tokens
+            try:
+                response = self._openai_client.chat.completions.create(**payload)
+            except Exception as e:
+                # Fail open: if reasoning_effort is unsupported, retry without it.
+                msg = str(e).lower()
+                if "reasoning_effort" in msg and "reasoning_effort" in payload:
+                    payload.pop("reasoning_effort", None)
+                    response = self._openai_client.chat.completions.create(**payload)
+                else:
+                    raise
             return response.choices[0].message.content.strip()
 
         payload: Dict[str, object] = {

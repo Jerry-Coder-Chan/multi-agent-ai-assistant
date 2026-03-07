@@ -26,6 +26,19 @@ class MockClientQuotaError:
         raise Exception("429 insufficient_quota")
 
 
+class MockClientCostMismatch:
+    def chat(self, messages, model, temperature=None, max_tokens=None):
+        return (
+            '{"inconsistency_detected":true,'
+            '"clarification_question":"Just to confirm: for Cooking Class, is it 3 people total (you, wife, daughter)?"}'
+        )
+
+
+class MockClientCostOk:
+    def chat(self, messages, model, temperature=None, max_tokens=None):
+        return '{"inconsistency_detected":false,"clarification_question":""}'
+
+
 class CriticAgentTests(unittest.TestCase):
     def _agent(self, client):
         return CriticAgent(
@@ -85,6 +98,31 @@ class CriticAgentTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "skipped_quota")
         self.assertEqual(result["response"], "Events listed.")
+
+    def test_detect_attendee_inconsistency_requests_clarification(self):
+        agent = self._agent(MockClientCostMismatch())
+        result = agent.detect_attendee_inconsistency(
+            user_query="I go with my wife and daughter then 5 colleagues and 3 partners",
+            draft_response="Cooking Class: $75 x 2 ...",
+        )
+        self.assertEqual(result["status"], "clarification_needed")
+        self.assertIn("Cooking Class", result.get("clarification_question", ""))
+
+    def test_detect_attendee_inconsistency_ok(self):
+        agent = self._agent(MockClientCostOk())
+        result = agent.detect_attendee_inconsistency(
+            user_query="2 people for class, 6 for meetup",
+            draft_response="Cooking Class: $75 x 2 ... Tech Meetup: $5 x 6 ...",
+        )
+        self.assertEqual(result["status"], "ok")
+
+    def test_detect_attendee_inconsistency_quota_fail_open(self):
+        agent = self._agent(MockClientQuotaError())
+        result = agent.detect_attendee_inconsistency(
+            user_query="...",
+            draft_response="...",
+        )
+        self.assertEqual(result["status"], "skipped_quota")
 
 
 if __name__ == "__main__":

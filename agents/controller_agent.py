@@ -320,11 +320,39 @@ class ControllerAgent:
     def _apply_critic_if_enabled(self, user_query: str, response: str, intents: list):
         """Run optional critic pass; always fail open to original response."""
         active_intents = intents or []
+        if "EVENT_QUERY_DB" in active_intents:
+            if self.critic_agent and self.critic_agent.is_enabled() and "cost summary" in (response or "").lower():
+                check = self.critic_agent.detect_attendee_inconsistency(user_query, response)
+                if check.get("status") == "clarification_needed":
+                    clarification = check.get("clarification_question") or (
+                        "Just to confirm, how many people are attending each activity in total?"
+                    )
+                    return clarification, {
+                        "enabled": True,
+                        "status": "clarification_requested",
+                        "reason": "attendee_inconsistency_detected",
+                        "provider": getattr(self.critic_agent, "provider", ""),
+                        "model": getattr(self.critic_agent, "model", ""),
+                    }
+                if check.get("status", "").startswith("skipped"):
+                    return response, {
+                        "enabled": True,
+                        "status": check.get("status"),
+                        "reason": check.get("reason", ""),
+                        "provider": getattr(self.critic_agent, "provider", ""),
+                        "model": getattr(self.critic_agent, "model", ""),
+                    }
+            # Keep SQL response deterministic: do not rewrite wording or numbers.
+            return response, {
+                "enabled": False,
+                "status": "skipped_guardrail",
+                "reason": "deterministic_event_query_response",
+            }
+
         # Deterministic/structured outputs should not be flattened by critic rewrites.
         if (
             "TIME_QUERY" in active_intents
             or "RECOMMENDATION" in active_intents
-            or "EVENT_QUERY_DB" in active_intents
         ):
             return response, {
                 "enabled": False,

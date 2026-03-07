@@ -4,6 +4,8 @@ import sqlite3
 import json
 import hashlib
 import base64
+import re
+import unicodedata
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
@@ -1268,7 +1270,7 @@ else:
             status = str(critic.get("status", "")).lower()
             provider = str(critic.get("provider", "")).strip()
             provider_label = provider.title() if provider else "Critic"
-            if status in {"applied", "kept"}:
+            if status in {"applied", "kept", "clarification_requested"}:
                 critic_suffix = f" + Critic Agent ({provider_label})"
             elif status == "skipped_quota":
                 critic_suffix = " + Critic Agent (Skipped: Quota)"
@@ -1289,8 +1291,21 @@ else:
         if not isinstance(text, str):
             st.markdown(text)
             return
-        # Normalize accidental markdown code markers that cause mixed fonts.
-        clean = text.replace("```", "").replace("`", "")
+        # Normalize markdown/math artifacts that cause mixed fonts and broken inline equations.
+        clean = unicodedata.normalize("NFKC", text)
+        clean = clean.replace("```", "").replace("`", "")
+        clean = re.sub(
+            r"\n\s*([0-9]+(?:\.[0-9]+)?)\s*\n\s*([xX×*∗])\s*\n\s*([0-9]+(?:\.[0-9]+)?)\s*",
+            r"\n\1 \2 \3 ",
+            clean,
+        )
+        clean = re.sub(r"\s*\n\s*=\s*\n\s*", " = ", clean)
+        clean = re.sub(r"\s*\n\s*([xX×*∗])\s*\n\s*", r" \1 ", clean)
+        # Remove accidental emphasis markers from model outputs to keep typography consistent.
+        clean = clean.replace("**", "").replace("__", "")
+        # Avoid markdown math renderer switching fonts on inline `$...$`.
+        clean = re.sub(r"(?<!\\)\$", r"\\$", clean)
+        clean = re.sub(r"\n{3,}", "\n\n", clean)
         st.markdown(clean)
     # Display chat messages
     for idx, message in enumerate(st.session_state.messages):

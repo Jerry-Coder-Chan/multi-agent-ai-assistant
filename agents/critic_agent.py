@@ -147,3 +147,57 @@ class CriticAgent:
             if self._is_quota_or_rate_error(msg):
                 return {"response": draft_response, "status": "skipped_quota", "reason": msg}
             return {"response": draft_response, "status": "skipped_error", "reason": msg}
+
+    def detect_attendee_inconsistency(self, user_query: str, draft_response: str) -> Dict[str, str]:
+        """
+        Detect attendee-count inconsistency in cost answers.
+        Returns dict with keys:
+        - status: ok | clarification_needed | skipped_*
+        - clarification_question: optional
+        """
+        if not self.is_enabled():
+            return {"status": "disabled"}
+        if not user_query or not draft_response:
+            return {"status": "ok"}
+
+        system_prompt = (
+            "You validate attendee-count consistency for event cost calculations.\n"
+            "Return STRICT JSON only:\n"
+            "{"
+            '"inconsistency_detected": false,'
+            '"clarification_question": ""'
+            "}\n"
+            "Rules:\n"
+            "- Compare user-attendee intent vs computed attendee counts in draft response.\n"
+            "- If any mismatch/ambiguity exists, set inconsistency_detected=true and ask one concise clarifying question.\n"
+            "- Do not calculate totals; only detect mismatch and ask clarification when needed."
+        )
+        user_prompt = (
+            f"User query:\n{user_query}\n\n"
+            f"Draft response:\n{draft_response}"
+        )
+        try:
+            raw = self.client.chat(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=self.model,
+                temperature=0.0,
+                max_tokens=220,
+            )
+            parsed = self._extract_json_object(raw or "")
+            if not isinstance(parsed, dict):
+                return {"status": "ok"}
+            mismatch = bool(parsed.get("inconsistency_detected"))
+            question = str(parsed.get("clarification_question") or "").strip()
+            if mismatch:
+                if not question:
+                    question = "Just to confirm, how many people are attending each activity in total?"
+                return {"status": "clarification_needed", "clarification_question": question}
+            return {"status": "ok"}
+        except Exception as e:
+            msg = str(e)
+            if self._is_quota_or_rate_error(msg):
+                return {"status": "skipped_quota", "reason": msg}
+            return {"status": "skipped_error", "reason": msg}
