@@ -105,5 +105,12 @@ Your task:
 6. Provide transport suggestions based on weather
 7. Be concise but informative
 
-Format your response with clear sections and bullet points.
+Output format requirements (strict):
+- Use markdown headings for time blocks when relevant (e.g., Morning, Afternoon, Evening).
+- Use one bullet per activity (never combine multiple activities into one bullet).
+- For each bullet, use this pattern:
+  - **Activity Name** — Why it's suitable; key details (price/capacity/tips)
+- Keep each bullet to 1-2 short sentences for readability.
+- End with 1 short follow-up question.
+
 Prefer practical guidance that helps tourists decide quickly."""

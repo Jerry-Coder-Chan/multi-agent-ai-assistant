@@ -176,11 +176,25 @@ def _get_saved_mascot_path():
 
 
 # Initialize database if not already done in this session
+def _app_today_str() -> str:
+    app_tz = os.environ.get("APP_TIMEZONE", "Asia/Singapore")
+    try:
+        return datetime.now(ZoneInfo(app_tz)).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
 if 'db_initialized' not in st.session_state:
+    st.session_state.db_initialized = False
+if 'db_seed_date' not in st.session_state:
+    st.session_state.db_seed_date = ""
+
+# Refresh the seed data when app date rolls over to keep "today/tomorrow" queries accurate.
+if (not st.session_state.db_initialized) or (st.session_state.db_seed_date != _app_today_str()):
     try:
         event_count = initialize_events_database(db_path)
         st.session_state.db_initialized = True
         st.session_state.db_event_count = event_count
+        st.session_state.db_seed_date = _app_today_str()
     except Exception as e:
         st.error(f"Failed to initialize database: {str(e)}")
         st.session_state.db_initialized = False
@@ -1272,7 +1286,12 @@ else:
         return f"Multiple Agents: {', '.join(labels[:-1])}, and {labels[-1]}{critic_suffix}"
 
     def _render_response(text: str):
-        st.markdown(text)
+        if not isinstance(text, str):
+            st.markdown(text)
+            return
+        # Normalize accidental markdown code markers that cause mixed fonts.
+        clean = text.replace("```", "").replace("`", "")
+        st.markdown(clean)
     # Display chat messages
     for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):

@@ -319,6 +319,19 @@ class ControllerAgent:
 
     def _apply_critic_if_enabled(self, user_query: str, response: str, intents: list):
         """Run optional critic pass; always fail open to original response."""
+        active_intents = intents or []
+        # Deterministic/structured outputs should not be flattened by critic rewrites.
+        if (
+            "TIME_QUERY" in active_intents
+            or "RECOMMENDATION" in active_intents
+            or "EVENT_QUERY_DB" in active_intents
+        ):
+            return response, {
+                "enabled": False,
+                "status": "skipped_guardrail",
+                "reason": "structured_response_guardrail",
+            }
+
         if not self.critic_agent or not self.critic_agent.is_enabled():
             return response, {"enabled": False, "status": "disabled", "reason": "critic_disabled"}
 
@@ -328,7 +341,7 @@ class ControllerAgent:
             review = self.critic_agent.review_response(
                 user_query=user_query,
                 draft_response=response,
-                intents=intents or [],
+                intents=active_intents,
                 recent_history=history or [],
                 tourism_persona=self.TOURISM_PERSONA,
                 style_memory=self._get_style_memory_prompt(),
