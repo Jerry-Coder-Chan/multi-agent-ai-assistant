@@ -603,6 +603,11 @@ if 'initialized' not in st.session_state:
     st.session_state.voice_greeted = False
     st.session_state.tts_cache = {}
     st.session_state.voice_last_enabled = False
+    st.session_state.stt_language = "auto"
+    st.session_state.audio_last_transcribed_hash = None
+    st.session_state.audio_transcript_draft = ""
+    st.session_state.audio_transcript_input = ""
+    st.session_state.queued_audio_prompt = ""
 
 def _speak_text(text, rate=1.0, pitch=1.0, volume=1.0, voice_name=""):
     if not text:
@@ -677,6 +682,28 @@ def _openai_tts(text, model, voice, api_key):
         response_format="mp3"
     )
     return response.read()
+
+def _transcribe_audio(audio_bytes, api_key, language_code=None, filename="speech.webm", mime_type="audio/webm"):
+    if not audio_bytes:
+        return ""
+    client = OpenAI(api_key=api_key)
+    request_kwargs = {
+        "file": (filename, audio_bytes, mime_type),
+        "response_format": "text",
+    }
+    if language_code:
+        request_kwargs["language"] = language_code
+    # Prefer newer transcription model; fall back for compatibility.
+    for model_name in ("gpt-4o-mini-transcribe", "whisper-1"):
+        try:
+            transcript = client.audio.transcriptions.create(
+                model=model_name,
+                **request_kwargs,
+            )
+            return str(transcript).strip()
+        except Exception:
+            continue
+    raise RuntimeError("Audio transcription failed for all supported models.")
 
 def _get_tts_audio(text, api_key, model="gpt-4o-mini-tts", voice="marin"):
     cache = st.session_state.get("tts_cache", {})
@@ -878,6 +905,19 @@ with st.sidebar:
             )
             llm_model = qwen_model
     max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
+    st.selectbox(
+        "Audio input language",
+        options=["auto", "en", "zh", "ms", "ta"],
+        key="stt_language",
+        format_func=lambda x: {
+            "auto": "Auto-detect",
+            "en": "English",
+            "zh": "Chinese",
+            "ms": "Malay",
+            "ta": "Tamil",
+        }.get(x, x),
+        help="Language hint for transcription. Auto-detect is best for mixed language audio."
+    )
 
     # Security Settings (only show if AIRS key provided)
     if airs_api_key:
@@ -1323,10 +1363,76 @@ else:
                 )
             _render_response(message["content"])
     
-    # Chat input
-    if prompt := st.chat_input(
+    # Audio input (microphone): auto-transcribe each new recording.
+    # Streamlit fallback: older versions may not support st.audio_input.
+    audio_prompt = None
+    audio_clip = None
+    if hasattr(st, "audio_input"):
+        audio_clip = st.audio_input("Speak to Amanda (optional)")
+    else:
+        st.caption("Microphone input is unavailable in this Streamlit version.")
+        audio_clip = st.file_uploader(
+            "Upload an audio clip (wav/mp3/m4a/webm)",
+            type=["wav", "mp3", "m4a", "webm"],
+            key="audio_upload_fallback",
+        )
+    if audio_clip is not None:
+        audio_bytes = audio_clip.getvalue()
+        audio_name = getattr(audio_clip, "name", "speech.webm")
+        audio_type = getattr(audio_clip, "type", "audio/webm") or "audio/webm"
+        audio_hash = hashlib.sha256(audio_bytes).hexdigest()
+        if audio_hash != st.session_state.get("audio_last_transcribed_hash"):
+            active_openai_key = openai_api_key or st.session_state.get("openai_key", "")
+            if not active_openai_key:
+                st.error("OpenAI API Key is required for audio input transcription.")
+            else:
+                with st.spinner("Transcribing audio..."):
+                    try:
+                        language_hint = st.session_state.get("stt_language", "auto")
+                        transcript = _transcribe_audio(
+                            audio_bytes,
+                            active_openai_key,
+                            language_code=None if language_hint == "auto" else language_hint,
+                            filename=audio_name,
+                            mime_type=audio_type,
+                        )
+                        st.session_state.audio_last_transcribed_hash = audio_hash
+                        st.session_state.audio_transcript_draft = transcript or ""
+                        st.session_state.audio_transcript_input = transcript or ""
+                        if not transcript:
+                            st.warning("I could not detect speech in that recording.")
+                    except Exception as e:
+                        st.error(f"Audio transcription failed: {e}")
+
+    if st.session_state.get("audio_transcript_draft"):
+        edited_transcript = st.text_area(
+            "You said (edit before sending)",
+            value=st.session_state.get("audio_transcript_input", ""),
+            key="audio_transcript_editor_widget",
+            height=90,
+        )
+        st.session_state.audio_transcript_input = edited_transcript
+        if st.button("Send transcribed audio", key="send_audio_prompt"):
+            edited = st.session_state.get("audio_transcript_input", "").strip()
+            if edited:
+                st.session_state.queued_audio_prompt = edited
+                st.session_state.audio_transcript_draft = ""
+                st.session_state.audio_transcript_input = ""
+                if "audio_transcript_editor_widget" in st.session_state:
+                    del st.session_state["audio_transcript_editor_widget"]
+                st.rerun()
+            else:
+                st.warning("Transcript is empty. Record again or type your message.")
+
+    # Chat input (typed), then fallback to transcribed audio.
+    typed_prompt = st.chat_input(
         f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}."
-    ):
+    )
+    queued_audio_prompt = st.session_state.get("queued_audio_prompt", "").strip()
+    prompt = typed_prompt or queued_audio_prompt or audio_prompt
+    if prompt and prompt == queued_audio_prompt:
+        st.session_state.queued_audio_prompt = ""
+    if prompt:
         # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
