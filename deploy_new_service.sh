@@ -18,6 +18,7 @@ GCP_REGION="asia-southeast1"
 OLD_SERVICE="streamlit-ai-demo"
 NEW_SERVICE="multi-agent-ai-assistant"
 IMAGE_NAME="gcr.io/${GCP_PROJECT_ID}/${NEW_SERVICE}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Deploying Multi-Agent AI Assistant${NC}"
@@ -48,8 +49,8 @@ gcloud services enable run.googleapis.com
 gcloud services enable secretmanager.googleapis.com
 
 # Build new image
-echo -e "${YELLOW}Building Docker image as ${IMAGE_NAME}...${NC}"
-gcloud builds submit --tag ${IMAGE_NAME}
+echo -e "${YELLOW}Building Docker image as ${IMAGE_NAME} from ${SCRIPT_DIR}...${NC}"
+gcloud builds submit "${SCRIPT_DIR}" --tag ${IMAGE_NAME}
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}Error: Docker build failed${NC}"
@@ -62,7 +63,7 @@ echo -e "${GREEN}✓ Image built successfully${NC}"
 echo -e "${YELLOW}Checking for secrets...${NC}"
 SECRETS_EXIST=true
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY DASHSCOPE_API_KEY; do
     if ! gcloud secrets describe $SECRET &> /dev/null; then
         echo -e "${RED}✗ Secret $SECRET not found${NC}"
         SECRETS_EXIST=false
@@ -79,6 +80,7 @@ if [ "$SECRETS_EXIST" = false ]; then
     echo "echo -n 'your_weather_key' | gcloud secrets create WEATHER_API_KEY --data-file=-"
     echo "echo -n 'your_airs_key' | gcloud secrets create AIRS_API_KEY --data-file=-"
     echo "echo -n 'your_serpapi_key' | gcloud secrets create SERPAPI_API_KEY --data-file=-"
+    echo "echo -n 'your_dashscope_api_key' | gcloud secrets create DASHSCOPE_API_KEY --data-file=-"
     echo ""
     exit 1
 fi
@@ -88,7 +90,7 @@ echo -e "${YELLOW}Granting secret access...${NC}"
 PROJECT_NUMBER=$(gcloud projects describe ${GCP_PROJECT_ID} --format="value(projectNumber)")
 SERVICE_ACCOUNT="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
-for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY; do
+for SECRET in OPENAI_API_KEY WEATHER_API_KEY AIRS_API_KEY SERPAPI_API_KEY DASHSCOPE_API_KEY; do
     gcloud secrets add-iam-policy-binding $SECRET \
         --member="serviceAccount:${SERVICE_ACCOUNT}" \
         --role="roles/secretmanager.secretAccessor" \
@@ -107,7 +109,7 @@ gcloud run deploy ${NEW_SERVICE} \
     --memory 2Gi \
     --cpu 2 \
     --timeout 300 \
-    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest"
+    --set-secrets="OPENAI_API_KEY=OPENAI_API_KEY:latest,WEATHER_API_KEY=WEATHER_API_KEY:latest,AIRS_API_KEY=AIRS_API_KEY:latest,SERPAPI_API_KEY=SERPAPI_API_KEY:latest,DASHSCOPE_API_KEY=DASHSCOPE_API_KEY:latest"
 
 if [ $? -ne 0 ]; then
     echo -e "${RED}Error: Deployment failed${NC}"

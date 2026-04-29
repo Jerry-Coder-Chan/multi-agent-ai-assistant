@@ -18,9 +18,10 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from typing import Optional
+from typing import Optional, List, Union
+import os
 
 
 class RAGAgent:
@@ -29,7 +30,7 @@ class RAGAgent:
     def __init__(
         self,
         api_key: str,
-        pdf_path: str,
+        pdf_path: Union[str, List[str]],
         model: str = "gpt-5-mini",
         llm_provider: str = "openai",
         ollama_base_url: str = "",
@@ -48,11 +49,24 @@ class RAGAgent:
         # Load and process document
         self._load_document(pdf_path)
 
-    def _load_document(self, pdf_path: str):
-        """Load PDF and create vector store."""
-        # Load PDF
-        loader = PyMuPDFLoader(pdf_path)
-        documents = loader.load()
+    def _load_document(self, pdf_path: Union[str, List[str]]):
+        """Load one or more documents and create vector store."""
+        paths = pdf_path if isinstance(pdf_path, list) else [pdf_path]
+        documents = []
+        for path in paths:
+            if not path:
+                continue
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".pdf":
+                loader = PyMuPDFLoader(path)
+            elif ext in {".txt", ".md"}:
+                loader = TextLoader(path, encoding="utf-8")
+            else:
+                continue
+            documents.extend(loader.load())
+
+        if not documents:
+            raise ValueError("No supported RAG documents found. Please upload PDF/TXT/MD files.")
 
         # Split into chunks
         text_splitter = RecursiveCharacterTextSplitter(

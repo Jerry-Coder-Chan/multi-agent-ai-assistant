@@ -30,6 +30,19 @@ from agents.search_agent import SearchAgent
 from agents.llm_client import LLMClient
 from agents.critic_agent import CriticAgent
 
+
+class DisabledRAGAgent:
+    """Fallback RAG agent when document indexing cannot be initialized."""
+
+    def __init__(self, reason: str = ""):
+        self.reason = reason or "RAG is temporarily unavailable."
+
+    def query(self, question: str) -> str:
+        return (
+            "Future-events knowledge base is temporarily unavailable. "
+            "Please try again later or use event/weather/recommendation queries."
+        )
+
 # ============================================================================
 # DATABASE INITIALIZATION FUNCTION
 # ============================================================================
@@ -139,10 +152,23 @@ bg_cache_dir = os.path.join(asset_cache_dir, "backgrounds")
 os.makedirs(bg_cache_dir, exist_ok=True)
 mascot_cache_dir = os.path.join(asset_cache_dir, "mascot")
 os.makedirs(mascot_cache_dir, exist_ok=True)
+rag_upload_dir = os.path.join(data_dir, "rag_uploads")
+os.makedirs(rag_upload_dir, exist_ok=True)
 
-def _location_cache_path(location: str) -> str:
-    key = hashlib.md5(location.strip().lower().encode()).hexdigest()[:16]
-    return os.path.join(bg_cache_dir, f"{key}.jpg")
+def _location_cache_key(location: str) -> str:
+    return hashlib.md5(location.strip().lower().encode()).hexdigest()[:16]
+
+def _location_cache_path(location: str, ext: str = "jpg") -> str:
+    safe_ext = (ext or "jpg").lower().lstrip(".")
+    return os.path.join(bg_cache_dir, f"{_location_cache_key(location)}.{safe_ext}")
+
+def _resolve_cached_background_path(location: str):
+    cache_key = _location_cache_key(location)
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        candidate = os.path.join(bg_cache_dir, f"{cache_key}.{ext}")
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 def _image_to_data_uri(path: str) -> str:
     ext = os.path.splitext(path)[1].lower().lstrip(".") or "jpeg"
@@ -153,8 +179,9 @@ def _image_to_data_uri(path: str) -> str:
 
 def _get_cached_background(location: str):
     location = location.strip() or "Singapore"
-    cache_path = _location_cache_path(location)
-    if not os.path.exists(cache_path):
+    cache_path = _resolve_cached_background_path(location)
+    if not cache_path:
+        cache_path = _location_cache_path(location, "jpg")
         try:
             query = urllib.parse.quote_plus(f"{location} skyline")
             url = f"https://source.unsplash.com/1600x900/?{query}"
@@ -583,6 +610,71 @@ st.markdown("""
         background-color: var(--brand-accent-strong) !important;
         border-color: var(--brand-accent-strong) !important;
     }
+    /* Compact chat composer polish */
+    .st-key-prompt_draft input {
+        min-height: 46px !important;
+        border-radius: 12px !important;
+        border: 1px solid #d7dee7 !important;
+        padding-left: 0.9rem !important;
+        padding-right: 0.9rem !important;
+        box-shadow: none !important;
+    }
+    .st-key-prompt_draft input:focus {
+        border-color: var(--brand-accent) !important;
+        box-shadow: 0 0 0 1px var(--brand-accent) !important;
+    }
+    .st-key-send_prompt_btn button {
+        min-height: 46px !important;
+        border-radius: 12px !important;
+        font-size: 0 !important;
+        background-color: var(--brand-accent) !important;
+        border: 1px solid var(--brand-accent-strong) !important;
+        color: #ffffff !important;
+        position: relative !important;
+    }
+    .st-key-send_prompt_btn button:hover {
+        background-color: var(--brand-accent-strong) !important;
+        border-color: var(--brand-accent-strong) !important;
+    }
+    .st-key-send_prompt_btn button::before {
+        content: "";
+        width: 18px;
+        height: 18px;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        background: currentColor;
+        -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg>') no-repeat center / contain;
+        mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"white\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><line x1=\"22\" y1=\"2\" x2=\"11\" y2=\"13\"/><polygon points=\"22 2 15 22 11 13 2 9 22 2\"/></svg>') no-repeat center / contain;
+    }
+    .st-key-send_prompt_btn button:disabled {
+        opacity: 0.6 !important;
+    }
+    .stPopover > button {
+        min-height: 46px !important;
+        border-radius: 12px !important;
+        border: 1px solid #d7dee7 !important;
+        background: #ffffff !important;
+        font-size: 0 !important;
+        position: relative !important;
+    }
+    .stPopover > button:hover {
+        border-color: var(--brand-accent) !important;
+        color: var(--brand-accent-strong) !important;
+    }
+    .stPopover > button::before {
+        content: "";
+        width: 18px;
+        height: 18px;
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--brand-accent-strong);
+        -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"black\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z\"/><path d=\"M19 10a7 7 0 0 1-14 0\"/><line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"23\"/><line x1=\"8\" y1=\"23\" x2=\"16\" y2=\"23\"/></svg>') no-repeat center / contain;
+        mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"black\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z\"/><path d=\"M19 10a7 7 0 0 1-14 0\"/><line x1=\"12\" y1=\"19\" x2=\"12\" y2=\"23\"/><line x1=\"8\" y1=\"23\" x2=\"16\" y2=\"23\"/></svg>') no-repeat center / contain;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -608,6 +700,10 @@ if 'initialized' not in st.session_state:
     st.session_state.audio_transcript_draft = ""
     st.session_state.audio_transcript_input = ""
     st.session_state.queued_audio_prompt = ""
+    st.session_state.prompt_draft = ""
+    st.session_state.prompt_prefill = ""
+    st.session_state.queued_prompt = ""
+    st.session_state.clear_prompt_draft = False
 
 def _speak_text(text, rate=1.0, pitch=1.0, volume=1.0, voice_name=""):
     if not text:
@@ -705,6 +801,17 @@ def _transcribe_audio(audio_bytes, api_key, language_code=None, filename="speech
             continue
     raise RuntimeError("Audio transcription failed for all supported models.")
 
+
+def _is_ollama_reachable(base_url: str, timeout_sec: float = 1.5):
+    """Fast health check for local/remote Ollama availability."""
+    try:
+        if not base_url:
+            return False
+        resp = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=timeout_sec)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
 def _get_tts_audio(text, api_key, model="gpt-4o-mini-tts", voice="marin"):
     cache = st.session_state.get("tts_cache", {})
     text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -760,8 +867,16 @@ if 'user_session_id' not in st.session_state:
     from datetime import datetime
     session_id = hashlib.md5(f"{datetime.now().isoformat()}".encode()).hexdigest()[:12]
     st.session_state.user_session_id = f"session_{session_id}"
+if "landing_location" not in st.session_state:
+    st.session_state.landing_location = "Singapore"
+if "selected_rag_docs" not in st.session_state:
+    st.session_state.selected_rag_docs = []
 
 # Sidebar configuration
+stats_placeholder = None
+verdict_placeholder = None
+payload_placeholder = None
+blocked_placeholder = None
 with st.sidebar:
     st.title("⚙️ Configuration")
     
@@ -797,7 +912,11 @@ with st.sidebar:
     dashscope_base_url = env_dashscope_base_url or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     qwen_model = "qwen-plus"
     ollama_base_url = env_ollama_base_url or ""
-    ollama_model = env_ollama_model or "llama3.2"
+    ollama_model = env_ollama_model or "qwen3:8b"
+    enable_ollama_fallback = False
+    warm_fallback_ollama = False
+    detected_ollama_base_url = env_ollama_base_url or "http://localhost:11434"
+    ollama_available = _is_ollama_reachable(detected_ollama_base_url)
 
     # API Keys
     st.subheader("API Keys")
@@ -841,25 +960,133 @@ with st.sidebar:
             key="serpapi_key",
             help="Enables live web search fallback"
         )
+
+    # Qwen (DashScope) Key Logic (optional for critic, required when Qwen is primary)
+    if env_dashscope_key:
+        dashscope_api_key = env_dashscope_key
+        st.success("✅ Qwen API Key loaded")
+    else:
+        dashscope_api_key = st.text_input(
+            "Qwen API Key (Optional, Critic)",
+            type="password",
+            key="dashscope_key",
+            help="Used for Qwen provider or optional cross-LLM critic."
+        )
+        if dashscope_api_key:
+            st.success("✅ Qwen API Key loaded")
     
     # Settings
     st.subheader("Settings")
+    st.text_input(
+        "Default City",
+        key="landing_location",
+        help="Used for hero background and default examples.",
+    )
+    st.subheader("Appearance")
+    bg_upload = st.file_uploader(
+        "City background image (optional)",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="city_bg_upload",
+        help="Overrides auto-fetched background for the selected city.",
+    )
+    if bg_upload is not None:
+        bg_bytes = bg_upload.getvalue()
+        bg_hash = hashlib.sha256(bg_bytes).hexdigest()
+        bg_signature = f"{(st.session_state.get('landing_location') or 'Singapore').strip().lower()}:{bg_hash}"
+        if bg_signature != st.session_state.get("last_bg_upload_signature"):
+            city = (st.session_state.get("landing_location") or "Singapore").strip() or "Singapore"
+            ext = (os.path.splitext(bg_upload.name)[1].lower().lstrip(".") or "jpg")
+            cache_key = _location_cache_key(city)
+            for old_ext in ("jpg", "jpeg", "png", "webp"):
+                old_path = os.path.join(bg_cache_dir, f"{cache_key}.{old_ext}")
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+            save_path = _location_cache_path(city, ext)
+            with open(save_path, "wb") as f:
+                f.write(bg_bytes)
+            st.session_state.last_bg_upload_signature = bg_signature
+            st.success(f"✅ Background uploaded for {city}.")
+
+    mascot_upload = st.file_uploader(
+        "Amanda mascot image (optional)",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="mascot_upload",
+        help="Upload a custom mascot image for the landing card.",
+    )
+    if mascot_upload is not None:
+        mascot_bytes = mascot_upload.getvalue()
+        mascot_hash = hashlib.sha256(mascot_bytes).hexdigest()
+        if mascot_hash != st.session_state.get("last_mascot_upload_hash"):
+            ext = (os.path.splitext(mascot_upload.name)[1].lower().lstrip(".") or "png")
+            for old_ext in ("png", "jpg", "jpeg", "webp"):
+                old_path = os.path.join(mascot_cache_dir, f"mascot.{old_ext}")
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+            mascot_path = os.path.join(mascot_cache_dir, f"mascot.{ext}")
+            with open(mascot_path, "wb") as f:
+                f.write(mascot_bytes)
+            st.session_state.mascot_path = mascot_path
+            st.session_state.last_mascot_upload_hash = mascot_hash
+            st.success("✅ Mascot uploaded.")
+
+    st.subheader("RAG Documents")
+    rag_uploads = st.file_uploader(
+        "Upload RAG files (PDF/TXT/MD)",
+        type=["pdf", "txt", "md"],
+        accept_multiple_files=True,
+        key="rag_docs_upload",
+        help="These files will be used by the Future Info / RAG agent.",
+    )
+    if rag_uploads:
+        for upload in rag_uploads:
+            doc_bytes = upload.getvalue()
+            doc_hash = hashlib.sha256(doc_bytes).hexdigest()[:12]
+            ext = os.path.splitext(upload.name)[1].lower() or ".pdf"
+            base = re.sub(r"[^a-zA-Z0-9._-]+", "_", os.path.splitext(upload.name)[0]).strip("_") or "rag_doc"
+            save_name = f"{base}_{doc_hash}{ext}"
+            save_path = os.path.join(rag_upload_dir, save_name)
+            if not os.path.exists(save_path):
+                with open(save_path, "wb") as f:
+                    f.write(doc_bytes)
+        st.success(f"✅ Uploaded {len(rag_uploads)} RAG document(s).")
+
+    default_rag_doc = os.path.join(data_dir, "Singapore_2026_Major_Events.pdf")
+    available_rag_docs = []
+    if os.path.exists(default_rag_doc):
+        available_rag_docs.append(default_rag_doc)
+    for fname in sorted(os.listdir(rag_upload_dir)):
+        if fname.lower().endswith((".pdf", ".txt", ".md")):
+            available_rag_docs.append(os.path.join(rag_upload_dir, fname))
+
+    doc_labels = {p: ("Default: Singapore 2026 Major Events" if p == default_rag_doc else os.path.basename(p)) for p in available_rag_docs}
+    default_selection = st.session_state.get("selected_rag_docs") or ([default_rag_doc] if os.path.exists(default_rag_doc) else [])
+    selected_rag_docs = st.multiselect(
+        "Active RAG documents",
+        options=available_rag_docs,
+        default=[p for p in default_selection if p in available_rag_docs],
+        format_func=lambda p: doc_labels.get(p, os.path.basename(p)),
+        help="Pick one or more documents to index when initializing the assistant.",
+    )
+    st.session_state.selected_rag_docs = selected_rag_docs
+
     warm_ollama = False
     enable_critic = st.checkbox(
         "Enable Critic LLM",
         value=True,
         help="Cross-check response quality with a secondary model; auto-skips on quota/errors."
     )
-    llm_provider = st.selectbox("LLM Provider", ["OpenAI", "Ollama", "Qwen"], index=0)
+    provider_options = ["OpenAI", "Qwen"]
+    if ollama_available:
+        provider_options.insert(1, "Ollama")
+        st.success(f"✅ Ollama reachable ({detected_ollama_base_url})")
+    else:
+        st.info("ℹ️ Ollama not reachable from this runtime. Hiding Ollama provider options.")
+
+    if st.session_state.get("llm_provider_select") not in provider_options:
+        st.session_state["llm_provider_select"] = provider_options[0]
+    llm_provider = st.selectbox("LLM Provider", provider_options, key="llm_provider_select")
     if llm_provider == "OpenAI":
         llm_model = st.selectbox("LLM Model", ["gpt-5-mini", "gpt-5", "gpt-5.4"], index=0)
-        if not dashscope_api_key:
-            dashscope_api_key = st.text_input(
-                "Qwen API Key (Optional, Critic)",
-                type="password",
-                key="dashscope_key",
-                help="Used only as cross-LLM critic when primary provider is OpenAI."
-            )
     else:
         if llm_provider == "Ollama":
             if env_ollama_base_url:
@@ -869,16 +1096,61 @@ with st.sidebar:
                 value=env_ollama_base_url or ollama_base_url or "http://localhost:11434",
                 help="For local Ollama, use http://localhost:11434"
             )
+            ollama_preset = st.selectbox(
+                "Ollama Preset Model",
+                options=["qwen3:8b", "Custom"],
+                index=0 if (ollama_model or "").startswith("qwen3:8b") else 1,
+                help="Pick a local Ollama model quickly, or choose Custom."
+            )
             ollama_model = st.text_input(
                 "Ollama Model",
-                value=ollama_model or "llama3.2",
-                help="Example: llama3.2"
+                value=(
+                    "qwen3:8b"
+                    if ollama_preset == "qwen3:8b"
+                    else (ollama_model or "qwen3:8b")
+                ),
+                help="Example: qwen3:8b"
             )
             warm_ollama = st.checkbox(
                 "Warm up Ollama on init",
                 value=True,
                 help="Sends a short prompt during initialization to reduce cold-start latency"
             )
+            ollama_timeout = st.number_input(
+                "Ollama timeout (seconds)",
+                min_value=10,
+                max_value=300,
+                value=int(os.environ.get("OLLAMA_TIMEOUT", "60")),
+                step=5,
+                help="Increase this for slower local models to avoid read timeouts."
+            )
+            os.environ["OLLAMA_TIMEOUT"] = str(int(ollama_timeout))
+            enable_cloud_handover = st.checkbox(
+                "Escalate unclear Ollama answers to cloud LLM",
+                value=bool(openai_api_key or dashscope_api_key),
+                help="If Ollama returns unclear/partial output, retry the same prompt on cloud LLM."
+            )
+            os.environ["ENABLE_CLOUD_FALLBACK_FROM_OLLAMA"] = "1" if enable_cloud_handover else "0"
+            cloud_choices = ["OpenAI", "Qwen", "Auto"]
+            cloud_default = "OpenAI" if openai_api_key else "Qwen" if dashscope_api_key else "Auto"
+            cloud_provider = st.selectbox(
+                "Cloud handover target",
+                options=cloud_choices,
+                index=cloud_choices.index(cloud_default),
+                disabled=not enable_cloud_handover
+            )
+            if cloud_provider == "OpenAI":
+                os.environ["CLOUD_FALLBACK_PROVIDER"] = "openai"
+                os.environ["CLOUD_FALLBACK_MODEL"] = "gpt-5-mini"
+            elif cloud_provider == "Qwen":
+                os.environ["CLOUD_FALLBACK_PROVIDER"] = "qwen"
+                os.environ["CLOUD_FALLBACK_MODEL"] = "qwen-plus"
+            else:
+                os.environ["CLOUD_FALLBACK_PROVIDER"] = "auto"
+                os.environ["CLOUD_FALLBACK_MODEL"] = ""
+            # When Ollama is primary, cloud fallback is not used.
+            os.environ["ENABLE_OLLAMA_FALLBACK"] = "0"
+            os.environ["OLLAMA_FALLBACK_MODEL"] = ollama_model or "qwen3:8b"
             if st.button("Test Ollama connection"):
                 try:
                     resp = requests.get(f"{ollama_base_url.rstrip('/')}/api/tags", timeout=5)
@@ -888,11 +1160,8 @@ with st.sidebar:
                     st.error(f"❌ Ollama test failed: {e}")
             llm_model = ollama_model
         else:
-            if env_dashscope_key:
-                dashscope_api_key = env_dashscope_key
-                st.success("✅ DASHSCOPE_API_KEY loaded")
-            else:
-                dashscope_api_key = st.text_input("Qwen API Key", type="password", key="dashscope_key")
+            if not dashscope_api_key:
+                st.warning("Qwen API Key is required when LLM Provider is Qwen.")
             dashscope_base_url = st.text_input(
                 "Qwen Base URL",
                 value=dashscope_base_url,
@@ -904,6 +1173,40 @@ with st.sidebar:
                 help="Recommended: qwen-plus"
             )
             llm_model = qwen_model
+    if llm_provider != "Ollama":
+        os.environ["ENABLE_CLOUD_FALLBACK_FROM_OLLAMA"] = "0"
+        os.environ["CLOUD_FALLBACK_PROVIDER"] = os.environ.get("CLOUD_FALLBACK_PROVIDER", "openai")
+        os.environ["CLOUD_FALLBACK_MODEL"] = os.environ.get("CLOUD_FALLBACK_MODEL", "")
+        if ollama_available:
+            enable_ollama_fallback = st.checkbox(
+                "Use Ollama as fallback for cloud errors",
+                value=bool(ollama_base_url),
+                help="Requires Ollama Base URL. Falls back on quota/rate-limit/timeout."
+            )
+            if enable_ollama_fallback:
+                ollama_base_url = st.text_input(
+                    "Ollama Base URL (Fallback)",
+                    value=env_ollama_base_url or ollama_base_url or "http://localhost:11434",
+                    help="For local Ollama, use http://localhost:11434"
+                )
+                ollama_model = st.text_input(
+                    "Ollama Fallback Model",
+                    value=ollama_model or "qwen3:8b",
+                    help="Example: qwen3:8b"
+                )
+                warm_fallback_ollama = st.checkbox(
+                    "Warm up Ollama fallback on init",
+                    value=True,
+                    help="Runs a short test prompt so fallback is ready before first failure."
+                )
+            os.environ["ENABLE_OLLAMA_FALLBACK"] = "1" if enable_ollama_fallback else "0"
+            if ollama_model:
+                os.environ["OLLAMA_FALLBACK_MODEL"] = ollama_model
+            if ollama_base_url:
+                os.environ["OLLAMA_BASE_URL"] = ollama_base_url
+        else:
+            enable_ollama_fallback = False
+            os.environ["ENABLE_OLLAMA_FALLBACK"] = "0"
     max_history = st.number_input("Conversation History", min_value=5, max_value=50, value=20, step=1)
     st.selectbox(
         "Audio input language",
@@ -978,8 +1281,11 @@ with st.sidebar:
                     chat_agent = ChatAgent(max_history=max_history)
                     weather_agent = WeatherAgent(weather_api_key)
                     
-                    # Use the db_path we already defined
-                    pdf_path = os.path.join(data_dir, "Singapore_2026_Major_Events.pdf")
+                    # Use selected RAG documents from sidebar (fall back to default file).
+                    default_rag_doc = os.path.join(data_dir, "Singapore_2026_Major_Events.pdf")
+                    rag_doc_paths = st.session_state.get("selected_rag_docs") or []
+                    if not rag_doc_paths and os.path.exists(default_rag_doc):
+                        rag_doc_paths = [default_rag_doc]
                     
                     event_agent = EventAgent(db_path)
                     provider_key = (
@@ -987,18 +1293,26 @@ with st.sidebar:
                         else "qwen" if llm_provider == "Qwen"
                         else "openai"
                     )
-                    if provider_key == "ollama" and warm_ollama:
+                    should_warm_ollama = (
+                        (provider_key == "ollama" and warm_ollama)
+                        or (provider_key != "ollama" and enable_ollama_fallback and warm_fallback_ollama and ollama_base_url)
+                    )
+                    if should_warm_ollama:
                         try:
+                            warm_provider = "ollama"
+                            warm_model = ollama_model or "qwen3:8b"
                             warm_client = LLMClient(
-                                provider=provider_key,
+                                provider=warm_provider,
                                 openai_api_key=openai_api_key,
                                 ollama_base_url=ollama_base_url,
                                 qwen_api_key=dashscope_api_key,
                                 qwen_base_url=dashscope_base_url,
                             )
+                            # Warm-up should validate local Ollama only (no cloud handover).
+                            warm_client.cloud_fallback_from_ollama = False
                             _ = warm_client.chat(
                                 messages=[{"role": "user", "content": "hi"}],
-                                model=llm_model,
+                                model=warm_model,
                                 max_tokens=5,
                                 temperature=0.0,
                             )
@@ -1013,15 +1327,19 @@ with st.sidebar:
                         qwen_api_key=dashscope_api_key,
                         qwen_base_url=dashscope_base_url,
                     )
-                    rag_agent = RAGAgent(
-                        openai_api_key,
-                        pdf_path,
-                        llm_model,
-                        llm_provider=provider_key,
-                        ollama_base_url=ollama_base_url,
-                        qwen_api_key=dashscope_api_key,
-                        qwen_base_url=dashscope_base_url,
-                    )
+                    try:
+                        rag_agent = RAGAgent(
+                            openai_api_key,
+                            rag_doc_paths,
+                            llm_model,
+                            llm_provider=provider_key,
+                            ollama_base_url=ollama_base_url,
+                            qwen_api_key=dashscope_api_key,
+                            qwen_base_url=dashscope_base_url,
+                        )
+                    except Exception as e:
+                        st.warning(f"⚠️ RAG initialization skipped: {e}")
+                        rag_agent = DisabledRAGAgent(str(e))
                     image_agent = ImageAgent(openai_api_key)
                     search_agent = SearchAgent(serpapi_api_key) if serpapi_api_key else None
                     critic_agent = None
@@ -1112,7 +1430,60 @@ with st.sidebar:
                     st.session_state.voice_greeted = False
                     st.success("✅ Assistant initialized successfully!")
                 except Exception as e:
-                    st.error(f"Initialization failed: {str(e)}")
+                    err = str(e)
+                    if "insufficient_quota" in err.lower() or "429" in err:
+                        st.error(
+                            "Initialization failed due to provider quota limits. "
+                            "Please verify billing/credits for the active provider "
+                            "(OpenAI or Qwen) and retry."
+                        )
+                    else:
+                        st.error(f"Initialization failed: {err}")
+
+    # Persist security telemetry panels across reruns.
+    if stats_placeholder is not None and st.session_state.get("controller"):
+        try:
+            stats = st.session_state.controller.get_security_stats()
+            if stats.get("enabled"):
+                with stats_placeholder.container():
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Total Scans", stats.get("total_scans", 0))
+                        st.metric("Threats", stats.get("threats_detected", 0))
+                    with col2:
+                        st.metric("Blocked", stats.get("blocked_requests", 0))
+                        st.metric("Threat Rate", f"{stats.get('threat_rate', 0.0):.1f}%")
+            else:
+                stats_placeholder.info("Security monitoring is currently disabled.")
+        except Exception:
+            stats_placeholder.info("Security statistics unavailable.")
+
+    if verdict_placeholder is not None:
+        verdict = st.session_state.get("last_security_verdict")
+        if verdict:
+            verdict_placeholder.json(verdict)
+        else:
+            verdict_placeholder.info("No AIRS verdict yet.")
+
+    if payload_placeholder is not None:
+        payload = st.session_state.get("last_airs_request")
+        if payload:
+            payload_placeholder.json(_redact_sensitive_fields(payload))
+        else:
+            payload_placeholder.info("No AIRS payload yet.")
+
+    if blocked_placeholder is not None:
+        events = st.session_state.get("security_events", [])
+        if events:
+            lines = []
+            for event in events[-5:][::-1]:
+                lines.append(
+                    f"- **{event['kind']}** · {event['threat_type']} · "
+                    f"`{event['time']}`\n  - {event['summary']}"
+                )
+            blocked_placeholder.markdown("\n".join(lines))
+        else:
+            blocked_placeholder.info("No blocked/filtered events yet.")
 
     # Avoid duplicate success banners on rerun
     # (initialization already shows a success message)
@@ -1354,6 +1725,12 @@ else:
             if "intent" in message:
                 label = _format_multi_intent(message["intent"], message.get("critic"))
                 st.markdown(f'<div class="intent-badge">🔍 {label}</div>', unsafe_allow_html=True)
+                critic_meta = message.get("critic") if isinstance(message.get("critic"), dict) else {}
+                critic_status = str(critic_meta.get("status", "")).lower()
+                if critic_status.startswith("skipped"):
+                    reason = str(critic_meta.get("reason", "")).strip()
+                    if reason:
+                        st.caption(f"Critic skipped reason: {reason}")
             if message.get("security_badge"):
                 st.markdown(
                     '<div style="display:inline-block;background:#c62828;color:white;'
@@ -1363,75 +1740,77 @@ else:
                 )
             _render_response(message["content"])
     
-    # Audio input (microphone): auto-transcribe each new recording.
-    # Streamlit fallback: older versions may not support st.audio_input.
-    audio_prompt = None
-    audio_clip = None
-    if hasattr(st, "audio_input"):
-        audio_clip = st.audio_input("Speak to Amanda (optional)")
-    else:
-        st.caption("Microphone input is unavailable in this Streamlit version.")
-        audio_clip = st.file_uploader(
-            "Upload an audio clip (wav/mp3/m4a/webm)",
-            type=["wav", "mp3", "m4a", "webm"],
-            key="audio_upload_fallback",
+    # Compact composer: text input + mic button + submit button.
+    if "prompt_draft" not in st.session_state:
+        st.session_state.prompt_draft = ""
+    if st.session_state.get("clear_prompt_draft"):
+        st.session_state.prompt_draft = ""
+        st.session_state.clear_prompt_draft = False
+    if st.session_state.get("prompt_prefill"):
+        st.session_state.prompt_draft = st.session_state.get("prompt_prefill", "")
+        st.session_state.prompt_prefill = ""
+    prompt = (st.session_state.get("queued_prompt") or "").strip() or None
+    if prompt:
+        st.session_state.queued_prompt = ""
+    composer_cols = st.columns([0.84, 0.08, 0.08], vertical_alignment="bottom")
+    with composer_cols[0]:
+        st.text_input(
+            "Message",
+            key="prompt_draft",
+            label_visibility="collapsed",
+            placeholder=f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}.",
         )
-    if audio_clip is not None:
-        audio_bytes = audio_clip.getvalue()
-        audio_name = getattr(audio_clip, "name", "speech.webm")
-        audio_type = getattr(audio_clip, "type", "audio/webm") or "audio/webm"
-        audio_hash = hashlib.sha256(audio_bytes).hexdigest()
-        if audio_hash != st.session_state.get("audio_last_transcribed_hash"):
-            active_openai_key = openai_api_key or st.session_state.get("openai_key", "")
-            if not active_openai_key:
-                st.error("OpenAI API Key is required for audio input transcription.")
+    with composer_cols[1]:
+        with st.popover("Mic", use_container_width=True):
+            st.caption("Record and auto-fill message")
+            audio_clip = None
+            if hasattr(st, "audio_input"):
+                audio_clip = st.audio_input("Audio", label_visibility="collapsed")
             else:
-                with st.spinner("Transcribing audio..."):
-                    try:
-                        language_hint = st.session_state.get("stt_language", "auto")
-                        transcript = _transcribe_audio(
-                            audio_bytes,
-                            active_openai_key,
-                            language_code=None if language_hint == "auto" else language_hint,
-                            filename=audio_name,
-                            mime_type=audio_type,
-                        )
-                        st.session_state.audio_last_transcribed_hash = audio_hash
-                        st.session_state.audio_transcript_draft = transcript or ""
-                        st.session_state.audio_transcript_input = transcript or ""
-                        if not transcript:
-                            st.warning("I could not detect speech in that recording.")
-                    except Exception as e:
-                        st.error(f"Audio transcription failed: {e}")
-
-    if st.session_state.get("audio_transcript_draft"):
-        edited_transcript = st.text_area(
-            "You said (edit before sending)",
-            value=st.session_state.get("audio_transcript_input", ""),
-            key="audio_transcript_editor_widget",
-            height=90,
-        )
-        st.session_state.audio_transcript_input = edited_transcript
-        if st.button("Send transcribed audio", key="send_audio_prompt"):
-            edited = st.session_state.get("audio_transcript_input", "").strip()
-            if edited:
-                st.session_state.queued_audio_prompt = edited
-                st.session_state.audio_transcript_draft = ""
-                st.session_state.audio_transcript_input = ""
-                if "audio_transcript_editor_widget" in st.session_state:
-                    del st.session_state["audio_transcript_editor_widget"]
-                st.rerun()
-            else:
-                st.warning("Transcript is empty. Record again or type your message.")
-
-    # Chat input (typed), then fallback to transcribed audio.
-    typed_prompt = st.chat_input(
-        f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}."
-    )
-    queued_audio_prompt = st.session_state.get("queued_audio_prompt", "").strip()
-    prompt = typed_prompt or queued_audio_prompt or audio_prompt
-    if prompt and prompt == queued_audio_prompt:
-        st.session_state.queued_audio_prompt = ""
+                audio_clip = st.file_uploader(
+                    "Upload audio",
+                    type=["wav", "mp3", "m4a", "webm"],
+                    key="audio_upload_fallback",
+                    label_visibility="collapsed",
+                )
+            if audio_clip is not None:
+                audio_bytes = audio_clip.getvalue()
+                audio_name = getattr(audio_clip, "name", "speech.webm")
+                audio_type = getattr(audio_clip, "type", "audio/webm") or "audio/webm"
+                audio_hash = hashlib.sha256(audio_bytes).hexdigest()
+                if audio_hash != st.session_state.get("audio_last_transcribed_hash"):
+                    active_openai_key = openai_api_key or st.session_state.get("openai_key", "")
+                    if not active_openai_key:
+                        st.error("OpenAI API Key is required for audio transcription.")
+                    else:
+                        with st.spinner("Transcribing..."):
+                            try:
+                                language_hint = st.session_state.get("stt_language", "auto")
+                                transcript = _transcribe_audio(
+                                    audio_bytes,
+                                    active_openai_key,
+                                    language_code=None if language_hint == "auto" else language_hint,
+                                    filename=audio_name,
+                                    mime_type=audio_type,
+                                )
+                                st.session_state.audio_last_transcribed_hash = audio_hash
+                                if transcript:
+                                    st.session_state.prompt_prefill = transcript
+                                    st.rerun()
+                                else:
+                                    st.warning("Could not detect speech. Try again.")
+                            except Exception as e:
+                                st.error(f"Audio transcription failed: {e}")
+    with composer_cols[2]:
+        send_clicked = st.button("Send", key="send_prompt_btn", use_container_width=True, type="primary")
+    if send_clicked:
+        typed = (st.session_state.get("prompt_draft") or "").strip()
+        if typed:
+            st.session_state.queued_prompt = typed
+            st.session_state.clear_prompt_draft = True
+            st.rerun()
+        else:
+            st.warning("Please enter or record a prompt first.")
     if prompt:
         # Add user message
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -1624,6 +2003,7 @@ else:
                         "security_badge": security_badge,
                         "critic": result.get("critic"),
                     })
+                    st.rerun()
                 except Exception as e:
                     error_msg = f"Error: {str(e)}"
                     st.error(error_msg)

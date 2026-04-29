@@ -15,6 +15,7 @@ from dataclasses import dataclass, asdict
 import csv
 import os
 import re
+from urllib.parse import urlparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -47,12 +48,12 @@ class SecurityAgent:
     """
     
     # AIRS API Configuration
-    AIRS_BASE_URL = "https://service.api.aisecurity.paloaltonetworks.com"
+    AIRS_BASE_URL = "https://service-sg.api.aisecurity.paloaltonetworks.com"
     AIRS_SYNC_ENDPOINT = "/v1/scan/sync/request"
     
     # Application Configuration (from Strata Cloud Manager)
     APP_NAME = "multi-agent-ai-assistant"
-    DEPLOYMENT_PROFILE = "ezhi-airs-api-profile"
+    DEPLOYMENT_PROFILE = "AIRS Demo"
     
     def __init__(
         self, 
@@ -80,6 +81,8 @@ class SecurityAgent:
         self.last_prompt = None
         self.last_response = None
         self.taxonomy = self._load_taxonomy()
+        self.airs_base_url, self.airs_sync_endpoint = self._resolve_airs_endpoint()
+        self.deployment_profile = os.getenv("AIRS_PROFILE_NAME", self.DEPLOYMENT_PROFILE).strip()
         
         # Track activation status
         self.activation_status = "unknown"
@@ -102,7 +105,32 @@ class SecurityAgent:
         else:
             self.enabled = True
             self.activation_status = "pending"
-            logger.info(f"Security Agent initialized - App: {self.APP_NAME}, Profile: {self.DEPLOYMENT_PROFILE}")
+            logger.info(
+                "Security Agent initialized - App: %s, Profile: %s, Endpoint: %s%s",
+                self.APP_NAME,
+                self.deployment_profile,
+                self.airs_base_url,
+                self.airs_sync_endpoint,
+            )
+
+    def _resolve_airs_endpoint(self) -> Tuple[str, str]:
+        """
+        Resolve AIRS endpoint from env vars with sane defaults.
+        Supports:
+          - AIRS_ENDPOINT_URL (full URL)
+          - AIRS_BASE_URL + AIRS_SYNC_ENDPOINT
+        """
+        endpoint_url = (os.getenv("AIRS_ENDPOINT_URL") or "").strip()
+        if endpoint_url:
+            parsed = urlparse(endpoint_url)
+            if parsed.scheme and parsed.netloc:
+                base_url = f"{parsed.scheme}://{parsed.netloc}"
+                sync_endpoint = parsed.path or self.AIRS_SYNC_ENDPOINT
+                return base_url, sync_endpoint
+
+        base_url = (os.getenv("AIRS_BASE_URL") or self.AIRS_BASE_URL).strip()
+        sync_endpoint = (os.getenv("AIRS_SYNC_ENDPOINT") or self.AIRS_SYNC_ENDPOINT).strip()
+        return base_url, sync_endpoint
     
     def scan_interaction(
         self, 
@@ -250,7 +278,7 @@ class SecurityAgent:
             ],
             "tr_id": tr_id,
             "ai_profile": {
-                "profile_name": self.DEPLOYMENT_PROFILE
+                "profile_name": self.deployment_profile
             }
         }
         
@@ -262,7 +290,7 @@ class SecurityAgent:
         # Store last request payload for debugging/visibility
         self.last_request_payload = request_payload
 
-        url = f"{self.AIRS_BASE_URL}{self.AIRS_SYNC_ENDPOINT}"
+        url = f"{self.airs_base_url}{self.airs_sync_endpoint}"
         
         headers = {
             "Content-Type": "application/json",
@@ -586,7 +614,8 @@ class SecurityAgent:
             "last_error": self.last_error,
             "config": {
                 "app_name": self.APP_NAME,
-                "deployment_profile": self.DEPLOYMENT_PROFILE,
+                "deployment_profile": self.deployment_profile,
+                "endpoint": f"{self.airs_base_url}{self.airs_sync_endpoint}",
                 "scan_prompts": self.enable_prompt_scan,
                 "scan_responses": self.enable_response_scan,
                 "block_threats": self.block_on_threat

@@ -64,6 +64,7 @@ class ControllerAgent:
         # Default time zone for time queries
         self.last_time_tz = "Asia/Singapore"
         self.last_time_location_name = "Singapore"
+        self.pending_cost_clarification_query = ""
         
         # Security integration
         self.security_agent = security_agent
@@ -97,6 +98,15 @@ class ControllerAgent:
         print(f"\n{'='*60}")
         print(f"User Query: {user_query}")
         print(f"{'='*60}")
+
+        # If the previous turn asked for attendee clarification, merge short numeric follow-ups
+        # back into the original cost query so context is preserved.
+        if (
+            self.pending_cost_clarification_query
+            and self._is_attendee_only_followup(user_query)
+        ):
+            user_query = f"{self.pending_cost_clarification_query}. Also: {user_query}"
+            self.pending_cost_clarification_query = ""
 
         # ========================================================================
         # SECURITY STEP 1: Scan incoming prompt for threats
@@ -327,6 +337,9 @@ class ControllerAgent:
                     clarification = check.get("clarification_question") or (
                         "Just to confirm, how many people are attending each activity in total?"
                     )
+                    # Preserve original cost query so short follow-up confirmations
+                    # can be merged back for deterministic recalculation.
+                    self.pending_cost_clarification_query = user_query
                     return clarification, {
                         "enabled": True,
                         "status": "clarification_requested",
@@ -675,6 +688,58 @@ class ControllerAgent:
         intents = [it for it in order if it in intents]
         return {"intents": intents, "location": location, "date": date}
 
+    def _is_attendee_only_followup(self, query: str) -> bool:
+        q = (query or "").strip().lower()
+        if not q:
+            return False
+        # Confirmation-style follow-ups after a clarification prompt:
+        # "yes, include cooking class cost too".
+        if any(
+            phrase in q
+            for phrase in [
+                "yes",
+                "yep",
+                "yeah",
+                "pls include",
+                "please include",
+                "include",
+                "exclude",
+                "including me",
+                "excluding me",
+            ]
+        ):
+            # Avoid merging if user is clearly asking a brand-new domain question.
+            if any(k in q for k in ["weather", "time", "recommend", "image", "search"]):
+                return False
+            if len(q.split()) <= 20:
+                return True
+        # Numeric-only short follow-ups.
+        if re.fullmatch(
+            r"(?:about\s+)?\d+\s*(?:people|persons|person|pax)?(?:\s*in\s*total|\s*total)?[.?!]?",
+            q,
+        ):
+            return True
+
+        # Clarification phrases that refine attendee counts, e.g.
+        # "include me as well. 3 pax in total for tech meetup".
+        has_attendee_phrase = any(
+            k in q for k in [
+                "include me",
+                "excluding me",
+                "in total",
+                "total",
+                "pax",
+                "people",
+                "persons",
+                "person",
+            ]
+        )
+        has_number = re.search(r"\b\d+\b", q) is not None
+        has_new_primary_question = any(
+            k in q for k in ["how much", "cost", "price", "recommend", "weather", "time"]
+        )
+        return has_attendee_phrase and has_number and not has_new_primary_question
+
     def _handle_intent(self, intent: str, user_query: str, location: str, date: str, user_id: str) -> str:
         """Dispatch a single intent to its handler."""
         if intent == "IMAGE_GENERATION":
@@ -684,14 +749,14 @@ class ControllerAgent:
         if intent == "EVENT_QUERY_DB":
             return self._handle_event_query(date, user_query, location, user_id)
         if intent == "RECOMMENDATION":
-            return self._handle_recommendation(location, date, user_id)
+            return self._handle_recommendation(user_query, location, date, user_id)
         if intent == "WEATHER_QUERY":
             return self._handle_weather_query(location, date, user_id)
         if intent == "TIME_QUERY":
             return self._handle_time_query(user_query, user_id, location)
         return self._handle_unknown(user_query, routed_via_llm=True)
 
-    def _handle_recommendation(self, location: str, date: str, user_id: str = "anonymous") -> str:
+    def _handle_recommendation(self, query: str, location: str, date: str, user_id: str = "anonymous") -> str:
         """Handle recommendation requests."""
         print(f"[RECOMMENDATION] Generating for {location} on {date}")
 
@@ -708,6 +773,33 @@ class ControllerAgent:
 
             if not events:
                 return f"No events in database for {date}. Try asking about 2026 events!"
+
+            # Apply deterministic preference filters from the user prompt before LLM synthesis.
+            q = (query or "").lower()
+            wants_indoor = "indoor" in q
+            wants_outdoor = "outdoor" in q
+            wants_free = "free" in q
+            wants_budget = any(k in q for k in ["cheap", "budget", "affordable", "low cost", "low-cost"])
+
+            filtered_events = events
+            if wants_indoor and not wants_outdoor:
+                filtered_events = [e for e in filtered_events if bool(e.get("indoor"))]
+            elif wants_outdoor and not wants_indoor:
+                filtered_events = [e for e in filtered_events if not bool(e.get("indoor"))]
+
+            if wants_free:
+                filtered_events = [e for e in filtered_events if float(e.get("price", 0) or 0) == 0.0]
+            elif wants_budget:
+                filtered_events = [e for e in filtered_events if float(e.get("price", 0) or 0) <= 20.0]
+
+            if filtered_events:
+                events = filtered_events
+                print(f"  ✓ Filtered to {len(events)} event(s) by user preference")
+            elif wants_indoor or wants_outdoor or wants_free or wants_budget:
+                return (
+                    "I couldn't find events matching all your requested filters for today. "
+                    "Try relaxing one filter (for example, indoor-only or free-only)."
+                )
 
             print(f"  → Generating recommendations...")
             recommendations = self.recommendation_agent.generate_recommendation(weather_data, events)
@@ -1052,21 +1144,31 @@ class ControllerAgent:
                 return []
 
         def _extract_legs_with_fallback() -> List[dict]:
+            def _extract_legs_regex() -> List[dict]:
+                # Regex fallback for reliability when LLM extraction is unavailable
+                # or returns an incomplete set of activities.
+                segments = re.split(r"\s+\b(?:and|then)\b\s+(?=\d+\s*(?:persons?|people|pax)\b)", ql)
+                if len(segments) == 1:
+                    segments = re.split(r"\bthen\b", ql)
+                return [
+                    {"event_text": seg.strip(), "attendees": _infer_attendees_from_segment(seg)}
+                    for seg in segments
+                    if seg.strip()
+                ]
+
             llm_legs = _extract_legs_via_llm()
-            if llm_legs:
-                return llm_legs
             if llm_clarification_question:
                 return []
 
-            # Regex fallback for reliability when LLM extraction is unavailable.
-            segments = re.split(r"\s+\b(?:and|then)\b\s+(?=\d+\s*(?:persons?|people|pax)\b)", ql)
-            if len(segments) == 1:
-                segments = re.split(r"\bthen\b", ql)
-            return [
-                {"event_text": seg.strip(), "attendees": _infer_attendees_from_segment(seg)}
-                for seg in segments
-                if seg.strip()
-            ]
+            regex_legs = _extract_legs_regex()
+            if not llm_legs:
+                return regex_legs
+
+            # Prefer whichever extraction captures more activity legs.
+            # This prevents partial LLM parses from dropping a second activity.
+            if len(regex_legs) > len(llm_legs):
+                return regex_legs
+            return llm_legs
 
         legs = _extract_legs_with_fallback()
         breakdown = []
@@ -1092,8 +1194,12 @@ class ControllerAgent:
 
         if not breakdown:
             if llm_clarification_question:
+                self.pending_cost_clarification_query = query
                 return llm_clarification_question
+            self.pending_cost_clarification_query = ""
             return None
+
+        self.pending_cost_clarification_query = ""
 
         lines = [f"**Cost Summary ({used_date})**", ""]
         lines.extend(

@@ -67,6 +67,10 @@ class RecommendationAgent:
                 temperature=0.7,
             )
         except Exception as e:
+            # Fail open for local LLM timeouts: return deterministic, weather-aware suggestions.
+            err = str(e).lower()
+            if "read timed out" in err or "timeout" in err or "connectionpool" in err:
+                return self._fallback_recommendation(weather_data, events)
             raise Exception(f"Recommendation generation error: {str(e)}")
 
     def _build_context(self, weather_data: Dict, events: List[Dict]) -> str:
@@ -114,3 +118,43 @@ Output format requirements (strict):
 - End with 1 short follow-up question.
 
 Prefer practical guidance that helps tourists decide quickly."""
+
+    def _fallback_recommendation(self, weather_data: Dict, events: List[Dict]) -> str:
+        """Deterministic fallback when LLM provider times out/unavailable."""
+        rain = float(weather_data.get("rain_chance", 0) or 0)
+        temp = float(weather_data.get("temperature_c", 0) or 0)
+        prefer_indoor = rain >= 60 or temp >= 33
+
+        ranked = []
+        for e in events:
+            is_indoor = bool(e.get("indoor"))
+            score = 0
+            if prefer_indoor and is_indoor:
+                score += 3
+            if not prefer_indoor and not is_indoor:
+                score += 3
+            price = float(e.get("price", 0) or 0)
+            if price == 0:
+                score += 2
+            elif price <= 20:
+                score += 1
+            ranked.append((score, e))
+
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        picks = [e for _, e in ranked[:4]]
+
+        lines = []
+        if prefer_indoor:
+            lines.append("Given today's weather, indoor options are the best fit:")
+        else:
+            lines.append("Weather looks favorable, here are good picks for today:")
+        lines.append("")
+        for e in picks:
+            lines.append(
+                f"- **{e.get('name', 'Activity')}** — {e.get('type', 'Event')}, "
+                f"{e.get('time', 'N/A')} at {e.get('location', 'N/A')}; "
+                f"price ${float(e.get('price', 0) or 0):.2f}."
+            )
+        lines.append("")
+        lines.append("I can also filter by free-only, indoor-only, or evening options.")
+        return "\n".join(lines)
