@@ -1658,7 +1658,7 @@ if not st.session_state.initialized:
     st.info("👈 Configure API keys and initialize the assistant in the sidebar to begin.")
     st.text_input(
         "Ask me anything",
-        placeholder=f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}.",
+        placeholder="Ask me anything about the time, weather, activity recommendations or generate fun images.",
         label_visibility="collapsed",
         key="landing_prompt",
     )
@@ -1758,7 +1758,7 @@ else:
             "Message",
             key="prompt_draft",
             label_visibility="collapsed",
-            placeholder=f"I am Amanda, your intelligent event and activity companion - ask me anyting to plan, search, recommend, or create fun activities in {landing_location}.",
+            placeholder="Ask me anything about the time, weather, activity recommendations or generate fun images.",
         )
     with composer_cols[1]:
         with st.popover("Mic", use_container_width=True):
