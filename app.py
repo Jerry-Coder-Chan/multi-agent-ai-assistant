@@ -1008,7 +1008,7 @@ with st.sidebar:
             st.success(f"✅ Background uploaded for {city}.")
 
     mascot_upload = st.file_uploader(
-        "Amanda mascot image (optional)",
+        "Mascot image (optional)",
         type=["png", "jpg", "jpeg", "webp"],
         key="mascot_upload",
         help="Upload a custom mascot image for the landing card.",
@@ -1610,7 +1610,7 @@ st.markdown(
     <div class="landing-wrap">
         <div class="landing-backdrop" style="{banner_bg_style}"></div>
         <div class="landing-hero centered">
-            <div class="landing-title">Meet Amanda - your Multi-Agent AI Assistant</div>
+            <div class="landing-title">Agentic AI Tourist Chatbot</div>
             <div class="mascot-stage">
                 <div class="bubble bubble-1 bubble-float"><div class="bubble-title"><span class="icon">⏰</span>Time</div><span>Current date and time around the world</span></div>
                 <div class="bubble bubble-2 bubble-float"><div class="bubble-title"><span class="icon">☁️</span>Weather</div><span>Realtime weather forecast</span></div>

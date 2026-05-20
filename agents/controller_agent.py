@@ -483,8 +483,19 @@ class ControllerAgent:
         q = query.lower()
         intents = []
 
+        image_request = (
+            any(k in q for k in [
+                "generate image", "create image", "create picture", "generate picture",
+                "image of", "create a photo", "generate a photo", "generate fun images"
+            ])
+            or re.search(
+                r"\b(generate|create|make|draw)\b.{0,80}\b(image|picture|photo|mascot|illustration|artwork)\b",
+                q,
+            ) is not None
+        )
+
         # Keyword-based detection (allow multiple)
-        if any(k in q for k in ["generate image", "create image", "create picture", "generate picture", "image of", "create a photo", "generate a photo"]):
+        if image_request:
             intents.append("IMAGE_GENERATION")
         if any(k in q for k in [
             "what time", "what date", "what day", "date is", "time is",
